@@ -40,9 +40,10 @@ Pastikan perangkat lokal atau server memiliki:
 1. **Clone repository & buka di VS Code**
 
    ```bash
-   git clone <URL_REPO_GITHUB_ANDA>
-   cd <NAMA_FOLDER_REPO>
-   code .
+   git clone <https://github.com/YNTKTS-3/Freya-san_hub>
+   cd Freya-san_hub
+   bash install.sh
+   npm run dev
    ```
 
 2. **Siapkan file environment (`.env`)**
