@@ -1,0 +1,1099 @@
+ADDITIONAL MASTER PROMPT — JKT48 CLASSIFICATION, DIFFICULTY EXPLORER, TEAM EXPLORER & REDEEM MANAGEMENT SYSTEM
+
+Integrasikan seluruh spesifikasi berikut ke dalam project Freya-san Hub.
+
+Instruksi ini merupakan tambahan dan integrasi ke sistem yang sudah ada. Jangan menghapus, mengganti, atau merusak fitur sebelumnya.
+
+---
+
+PART A — JKT48 ERA CLASSIFICATION, DIFFICULTY EXPLORER & TEAM EXPLORER
+
+1. TUJUAN SISTEM
+
+Bangun sistem klasifikasi sejarah, era, generasi, member, Team, dan tingkat kesulitan JKT48 yang mencakup seluruh periode sejarah JKT48.
+
+Cakupan:
+
+- Seluruh generasi JKT48.
+- Member aktif.
+- Member trainee.
+- Member graduate.
+- Member yang pernah menjadi bagian dari Team.
+- Data sejarah dan arsip JKT48.
+
+Sistem harus mampu:
+
+- Mengarsipkan seluruh generasi.
+- Mengelompokkan member berdasarkan era.
+- Menyediakan tiga tingkat kesulitan.
+- Mengelompokkan Team ke dalam klasifikasi Old dan New.
+- Mengintegrasikan data ke seluruh permainan JKT48.
+- Menggunakan interactive list agar dashboard tidak dipenuhi terlalu banyak menu.
+
+Jangan membatasi database hanya pada member aktif atau generasi terbaru.
+
+2. JKT48 DIFFICULTY CLASSIFICATION
+
+Buat tiga level kesulitan utama.
+
+LEVEL 1 — MUDAH–MENENGAH
+
+Kategori: New Era – Fight Era
+
+Rentang:
+
+- New Era, mulai 2022.
+- Era-era berikutnya hingga Fight Era 2026, berdasarkan data sejarah yang terverifikasi.
+
+Cakupan:
+
+- Member dari periode New Era sampai Fight Era.
+- Member aktif.
+- Member trainee apabila relevan.
+- Member yang sudah graduate dalam rentang era tersebut.
+- Lagu, pertunjukan, event, aktivitas, sejarah, dan informasi terkait.
+
+Level ini merupakan level paling mudah.
+
+LEVEL 2 — MENENGAH
+
+Kategori: Era One
+
+Cakupan:
+
+- Seluruh member dalam periode Era One.
+- Member aktif maupun graduate.
+- Lagu, event, pertunjukan, aktivitas, sejarah dan informasi JKT48 dalam periode tersebut.
+
+Level ini memiliki tingkat kesulitan menengah.
+
+LEVEL 3 — SULIT
+
+Kategori: Group Release Era – Pre-One Era
+
+Rentang:
+
+- Sejak awal era rilis/grup JKT48 yang dimaksud.
+- Hingga berakhirnya era sebelum dimulainya Era One.
+
+Cakupan:
+
+- Member dari periode historis tersebut.
+- Sejarah awal JKT48.
+- Lagu, rilisan, pertunjukan, event, unit, Team dan informasi historis.
+- Data arsip dan trivia dari periode tersebut.
+
+Level ini merupakan level paling sulit.
+
+ATURAN KLASIFIKASI LEVEL
+
+1. Jangan membalik urutan level.
+2. Era One bukan level termudah.
+3. Jangan menggabungkan Level 2 dan Level 3.
+4. Jangan membuat level baru tanpa alasan dan persetujuan owner.
+5. Tingkat kesulitan pertanyaan boleh menyesuaikan kompleksitas soal, tetapi era sumber tetap harus dicatat.
+6. Untuk pertanyaan lintas era, gunakan aturan klasifikasi yang konsisten.
+7. Jangan memaksakan klasifikasi jika data belum terverifikasi.
+8. Member graduate tetap dapat digunakan dalam quiz dan arsip.
+9. Jangan menghapus data hanya karena member graduate.
+10. Terapkan klasifikasi pada game, quiz, challenge, leaderboard, rekomendasi game dan konten pembelajaran.
+
+3. JKT48 TEAM CLASSIFICATION
+
+Buat tiga kelompok navigasi utama.
+
+OLD
+
+- Team J.
+- Team KIII.
+- Team T.
+
+NEW
+
+- Team Love.
+- Team Dream.
+- Team Passion.
+
+OTHER / UNASSIGNED
+
+Kategori internal untuk data yang belum dapat diklasifikasikan atau tidak sesuai dengan kelompok di atas.
+
+Ketentuan:
+
+- Old dan New merupakan klasifikasi navigasi internal.
+- Jangan menganggap semua Team tersebut masih aktif.
+- Jangan menganggap klasifikasi Old dan New sebagai pembagian resmi organisasi JKT48 saat ini.
+- Simpan status historis Team.
+- Simpan riwayat perpindahan atau keterkaitan member dengan Team.
+- Member dapat memiliki riwayat beberapa Team.
+- Jangan mengarang riwayat Team.
+- Jangan menghilangkan riwayat ketika status member berubah.
+
+4. DASHBOARD NAVIGATION
+
+Jangan menampilkan seluruh generasi, era, Team dan member secara bersamaan.
+
+Gunakan navigasi bertingkat dengan interactive list.
+
+JKT48 Difficulty Explorer
+
+Tampilkan hanya tiga pilihan utama:
+
+1. Level 1 — Mudah–Menengah — New Era sampai Fight Era.
+2. Level 2 — Menengah — Era One.
+3. Level 3 — Sulit — Group Release Era sampai Pre-One Era.
+
+Setelah level dipilih, tampilkan:
+
+- Deskripsi era.
+- Rentang periode.
+- Jumlah data member jika valid.
+- Game yang tersedia.
+- Quiz dan challenge.
+- Arsip terkait.
+- Filter member.
+- Filter lagu.
+- Filter event.
+- Filter pertunjukan.
+- Filter generasi.
+- Filter status member.
+- Pencarian data.
+
+JKT48 Team Explorer
+
+Tampilkan:
+
+1. Old.
+2. New.
+3. Other / Unassigned.
+
+Setelah Old dipilih, tampilkan:
+
+- Team J.
+- Team KIII.
+- Team T.
+
+Setelah New dipilih, tampilkan:
+
+- Team Love.
+- Team Dream.
+- Team Passion.
+
+Setiap halaman Team menampilkan:
+
+- Deskripsi klasifikasi.
+- Status historis.
+- Member terkait.
+- Riwayat Team.
+- Generasi.
+- Era.
+- Arsip.
+- Pencarian.
+- Filter.
+
+Jangan menampilkan semua member langsung pada halaman utama Team Explorer.
+
+5. GENERATION & MEMBER ARCHIVE
+
+Buat sistem arsip member yang terintegrasi dengan 48Group Intelligence Center.
+
+Cakupan:
+
+- Seluruh generasi JKT48.
+- Member aktif.
+- Trainee.
+- Member graduate.
+- Riwayat Team.
+- Riwayat era.
+- Riwayat status.
+- Informasi historis yang relevan.
+
+Jangan menetapkan batas generasi secara permanen.
+
+Jika generasi baru muncul, sistem harus dapat menambahkannya melalui mekanisme pembaruan data.
+
+Setiap profil member harus terhubung dengan:
+
+- Generasi.
+- Era.
+- Status.
+- Riwayat Team.
+- Discography.
+- Theater Archive.
+- Event & Calendar.
+- Official News.
+- History & Archive.
+- Data quiz dan challenge.
+
+Data graduate harus tetap tersedia.
+
+6. INTEGRASI DENGAN 48GROUP GAME CENTER
+
+Integrasikan Difficulty Explorer dan Team Explorer dengan 48GROUP GAME CENTER.
+
+Game JKT48 harus dapat menggunakan filter:
+
+- Era.
+- Level.
+- Generasi.
+- Team.
+- Member.
+- Status member.
+- Lagu.
+- Discography.
+- Pertunjukan.
+- Event.
+- Sejarah.
+- Kategori quiz.
+
+Jika game menyediakan pilihan level, tampilkan tiga level utama.
+
+Jika game menyediakan pilihan Team, tampilkan Old, New, Other / Unassigned terlebih dahulu.
+
+Jika game menyediakan pilihan generasi, gunakan interactive list bertingkat, pencarian atau pagination.
+
+Integrasikan dengan game yang relevan dan benar-benar tersedia, termasuk:
+
+- Member Quiz.
+- Group Quiz.
+- Song / Discography Quiz.
+- Generation Challenge.
+- Theater Challenge.
+- Timeline Challenge.
+- Guess the Member.
+- Guess the Song.
+- Senbatsu Formation Challenge.
+- Group vs Group Quiz.
+- Daily Challenge.
+- Multiplayer Challenge.
+- Tournament.
+- Werewolf 48Group.
+- Mafia 48Group.
+
+Daftar tersebut merupakan cakupan integrasi, bukan pernyataan bahwa seluruh game telah selesai dibuat.
+
+Jangan mengklaim game tersedia apabila belum diimplementasikan.
+
+7. DATA MANAGEMENT & DATABASE
+
+Implementasikan klasifikasi melalui database dan registry, bukan sekadar frontend.
+
+Data minimal:
+
+- Member identifier.
+- Member name.
+- Generation.
+- Era classification.
+- Difficulty classification.
+- Team history.
+- Member status.
+- Historical period.
+- Source reference.
+- Verification status.
+- Last verified timestamp.
+- Relevant game content.
+
+Hindari hardcoding daftar member, generasi, Team dan era di banyak bagian sistem.
+
+Perubahan klasifikasi harus konsisten di:
+
+- Dashboard.
+- WhatsApp bot.
+- Game engine.
+- Command manager.
+- Quiz manager.
+- Search engine.
+- Analytics.
+- History & Archive.
+- 48Group Intelligence Center.
+- 48GROUP GAME CENTER.
+
+Jangan menghapus data historis yang masih relevan.
+
+8. SOURCE & FACT VERIFICATION
+
+Prioritaskan sumber resmi JKT48 dan sumber resmi terkait.
+
+Gunakan arsip yang dapat dipertanggungjawabkan jika sumber resmi tidak lagi tersedia.
+
+Setiap data harus memiliki:
+
+- Referensi sumber.
+- Tanggal verifikasi.
+- Status verifikasi.
+
+Bedakan:
+
+- Terverifikasi.
+- Belum terverifikasi.
+- Tidak dapat dipastikan.
+
+Jangan mengarang:
+
+- Tanggal era.
+- Riwayat Team.
+- Generasi.
+- Status member.
+- Data sejarah.
+
+Jika batas era belum dapat dipastikan, tandai sebagai belum terverifikasi.
+
+9. UI / UX
+
+Gunakan identitas visual Freya-san Hub:
+
+- Warna utama biru.
+- Light theme.
+- Dark theme.
+- System theme.
+- Responsive dashboard.
+- Mobile-friendly navigation.
+- Interactive list.
+- Search.
+- Filter.
+- Pagination.
+- Detail halaman bertingkat.
+- Loading state.
+- Empty state.
+- Error state.
+- Verification indicator.
+- Source indicator.
+
+Hindari:
+
+- Penumpukan seluruh generasi pada halaman utama.
+- Daftar Team terlalu panjang.
+- Daftar member yang langsung memenuhi layar.
+- Dropdown panjang tanpa struktur.
+- Hardcoded data palsu.
+- Tombol yang tidak berfungsi.
+- Modul kosong.
+- Duplikasi modul.
+- Hilangnya data historis.
+
+Pada WhatsApp, gunakan interactive list jika library dan platform mendukung. Jika tidak, gunakan fallback text menu yang konsisten.
+
+10. COMMAND, SEARCH & NAVIGATION INTEGRATION
+
+Integrasikan klasifikasi dengan command, parser, menu dan pencarian Freya-san Hub.
+
+Ketentuan:
+
+- Command lama tidak boleh rusak.
+- Prefix system tidak boleh berubah.
+- Jangan membuat command secara sembarangan.
+- Gunakan command yang sudah tersedia jika memungkinkan.
+- Jika perlu command baru, daftarkan di command registry, command explorer, permission, analytics dan help menu.
+- Jangan mengklaim command tersedia sebelum implementasi.
+
+Pencarian harus dapat menemukan data berdasarkan era, level, generasi, Team, member, lagu dan kategori terkait.
+
+11. IMPLEMENTATION & AUDIT
+
+Sebelum implementasi, audit:
+
+- Database.
+- 48Group Center.
+- 48GROUP GAME CENTER.
+- Dashboard.
+- Game engine.
+- Command registry.
+- Interactive list.
+- Source & Fact Verification.
+
+Saat implementasi:
+
+- Pertahankan fitur lama.
+- Integrasikan klasifikasi.
+- Gunakan database dan registry.
+- Pastikan navigasi berfungsi.
+- Pastikan game menggunakan klasifikasi yang benar.
+- Pastikan arsip graduate tersedia.
+- Pastikan dashboard ringkas.
+- Pastikan WhatsApp memiliki fallback.
+
+Setelah implementasi, uji:
+
+- Database.
+- Frontend.
+- WhatsApp menu.
+- Game integration.
+- Filter.
+- Search.
+- Data historis.
+- Status member.
+- Klasifikasi level.
+- Klasifikasi Team.
+- Source verification.
+- Error handling.
+- Pagination.
+- Responsive UI.
+
+Laporkan fitur yang diimplementasikan, diuji, belum selesai, kendala, perubahan database, modul terdampak dan hasil testing.
+
+Jangan mengklaim berhasil jika hanya membuat mockup, placeholder atau dokumentasi tanpa fungsi backend.
+
+---
+
+PART B — REDEEM MANAGEMENT SYSTEM
+
+12. TUJUAN REDEEM MANAGEMENT
+
+Bangun sistem Redeem Management yang memungkinkan owner membuat, mengatur, mengelola, menonaktifkan dan memantau kode redeem melalui dashboard maupun WhatsApp bot.
+
+Sistem harus mendukung konfigurasi reward yang fleksibel.
+
+Owner harus dapat menentukan:
+
+- Nama kode redeem.
+- Deskripsi.
+- Balance.
+- EXP.
+- Level.
+- Reward tambahan.
+- Batas klaim.
+- Masa berlaku.
+- Status redeem.
+- Ketentuan penggunaan.
+
+Jangan membatasi reward hanya pada balance dan EXP.
+
+Reward tambahan harus dapat dikembangkan melalui sistem reward registry.
+
+13. REDEEM DASHBOARD
+
+Tambahkan modul Redeem Management pada dashboard Freya-san Hub.
+
+Submenu utama:
+
+1. Redeem Codes.
+2. Reward Builder.
+3. Claim History.
+4. Redeem Analytics.
+5. Redeem Settings.
+
+A. REDEEM CODES
+
+Tampilkan daftar kode redeem dengan informasi:
+
+- Nama kode.
+- Deskripsi.
+- Status.
+- Tanggal dibuat.
+- Tanggal kedaluwarsa.
+- Total klaim.
+- Batas klaim.
+- Reward utama.
+- Jumlah reward tambahan.
+
+Sediakan fitur:
+
+- Buat redeem.
+- Edit redeem.
+- Lihat detail.
+- Aktifkan.
+- Nonaktifkan.
+- Hapus.
+- Cari.
+- Filter.
+- Lihat riwayat klaim.
+
+Gunakan pagination jika jumlah redeem banyak.
+
+B. REWARD BUILDER
+
+Buat Reward Builder interaktif.
+
+Owner harus dapat menentukan reward utama:
+
+- Balance.
+- EXP.
+- Level.
+
+Reward tambahan harus menggunakan daftar reward yang benar-benar didukung oleh sistem.
+
+Jangan menganggap seluruh contoh reward sebagai fitur final.
+
+Gunakan reward registry sebagai sumber utama daftar reward yang tersedia.
+
+Reward registry minimal menyimpan:
+
+- Reward identifier.
+- Nama reward.
+- Deskripsi.
+- Handler.
+- Parameter yang diperlukan.
+- Validasi.
+- Status ketersediaan.
+- Versi.
+- Kategori.
+- Ketentuan penggunaan.
+
+Reward hanya boleh muncul dalam Reward Builder apabila handler dan validasinya benar-benar tersedia.
+
+Jika handler belum tersedia, jangan tawarkan reward tersebut sebagai pilihan aktif.
+
+C. INTERACTIVE REWARD BUILDER FLOW
+
+Buat alur interaktif untuk menentukan reward tambahan.
+
+Alur:
+
+1. Owner mengatur reward utama.
+2. Sistem bertanya apakah owner ingin menambahkan reward tambahan.
+3. Jika tidak, lanjutkan ke ringkasan.
+4. Jika ya, tampilkan interactive list berisi reward yang tersedia dalam registry.
+5. Owner memilih jenis reward.
+6. Sistem menampilkan form konfigurasi sesuai jenis reward.
+7. Owner mengisi parameter reward.
+8. Sistem memvalidasi konfigurasi.
+9. Owner dapat menambahkan jenis reward lain.
+10. Owner memilih Selesai.
+11. Sistem menampilkan ringkasan seluruh reward.
+12. Owner dapat kembali mengedit atau mengonfirmasi.
+
+Ketentuan:
+
+- Jangan menampilkan pilihan reward yang tidak didukung.
+- Jangan menggunakan pilihan reward hardcoded sebagai pengganti registry.
+- Jangan menganggap contoh pilihan sebagai keputusan final.
+- Setiap jenis reward dapat memiliki parameter berbeda.
+- Validasi harus dilakukan di backend.
+- Jika tidak ada reward tambahan, redeem tetap dapat dibuat dengan reward utama.
+
+D. CLAIM HISTORY
+
+Tampilkan riwayat klaim:
+
+- Kode redeem.
+- Identitas pengguna.
+- Waktu klaim.
+- Reward yang diterima.
+- Status transaksi.
+- Sumber klaim.
+- Hasil validasi.
+- Keterangan jika gagal.
+
+Pisahkan data berdasarkan:
+
+- Klaim berhasil.
+- Klaim gagal.
+- Klaim ditolak.
+- Klaim kedaluwarsa.
+- Klaim yang dibatalkan jika sistem mendukungnya.
+
+Riwayat klaim tidak boleh hilang ketika kode redeem dihapus atau dinonaktifkan.
+
+E. REDEEM ANALYTICS
+
+Tampilkan statistik:
+
+- Total kode redeem.
+- Total klaim.
+- Klaim berhasil.
+- Klaim gagal.
+- Pengguna yang mengklaim.
+- Redeem paling banyak digunakan.
+- Redeem yang sudah kedaluwarsa.
+- Redeem yang sudah mencapai batas klaim.
+- Distribusi reward yang diberikan.
+
+Gunakan visualisasi yang sesuai dan data aktual dari database.
+
+Jangan menampilkan angka dummy sebagai statistik nyata.
+
+14. REDEEM CONFIGURATION
+
+Setiap kode redeem harus mendukung konfigurasi berikut.
+
+Informasi utama
+
+- Redeem name.
+- Redeem code.
+- Description.
+- Created by.
+- Created at.
+- Status.
+
+Reward utama
+
+- Balance.
+- EXP.
+- Level.
+
+Owner dapat mengatur nilai setiap reward secara independen.
+
+Sistem harus memvalidasi:
+
+- Nilai tidak negatif.
+- Tipe data benar.
+- Batas nilai sesuai aturan sistem.
+- Level sesuai mekanisme level yang benar-benar tersedia.
+
+Reward tambahan
+
+Sediakan konfigurasi reward tambahan melalui Reward Builder.
+
+Jenis reward yang muncul harus berasal dari reward registry.
+
+Contoh jenis reward yang mungkin dikembangkan:
+
+- Badge.
+- Achievement.
+- Streak.
+- Custom reward.
+- Reward lain yang memiliki handler nyata.
+
+Contoh di atas hanya ilustrasi kemungkinan pengembangan, bukan daftar fitur yang otomatis dianggap tersedia.
+
+Jika reward belum memiliki handler, jangan tampilkan sebagai reward yang bisa diberikan.
+
+Batas penggunaan
+
+- Total claim limit.
+- Per-user claim limit.
+- Expiration date.
+- Cooldown apabila didukung.
+- Status aktif/nonaktif.
+- Target pengguna apabila sistem mendukung.
+- Target grup apabila sistem mendukung.
+
+Sediakan opsi tanpa batas klaim atau tanpa kedaluwarsa jika sistem memang mendukungnya.
+
+Pesan redeem
+
+- Pesan berhasil.
+- Pesan gagal.
+- Pesan kode tidak ditemukan.
+- Pesan kode kedaluwarsa.
+- Pesan batas klaim tercapai.
+- Pesan pengguna sudah pernah mengklaim.
+
+Pesan harus dapat dikonfigurasi dengan placeholder yang aman.
+
+15. WHATSAPP COMMAND — ADDREDEEM
+
+Tambahkan sistem ".addredeem" melalui WhatsApp bot.
+
+Command ini harus menggunakan interactive form atau interactive list bertahap.
+
+Jangan meminta owner mengetik seluruh konfigurasi redeem dalam satu pesan panjang.
+
+Alur ".addredeem"
+
+Langkah 1 — Informasi redeem
+
+Minta:
+
+- Nama redeem.
+- Kode redeem.
+- Deskripsi.
+
+Langkah 2 — Reward utama
+
+Tampilkan form:
+
+- Balance.
+- EXP.
+- Level.
+
+Owner dapat mengisi sebagian atau seluruh reward utama sesuai validasi sistem.
+
+Jika suatu reward tidak diberikan, gunakan nilai netral yang ditentukan sistem, bukan angka yang dibuat secara acak.
+
+Langkah 3 — Reward tambahan
+
+Tanyakan apakah owner ingin menambahkan reward tambahan.
+
+Jika tidak:
+
+- Lanjutkan ke langkah berikutnya.
+
+Jika ya:
+
+- Tampilkan interactive list reward yang tersedia dari registry.
+- Owner memilih jenis reward.
+- Bot meminta konfigurasi sesuai jenis reward.
+- Bot memvalidasi input.
+- Owner dapat menambahkan reward lainnya.
+- Owner memilih Selesai untuk melanjutkan.
+
+Jangan menampilkan reward yang tidak mempunyai handler aktif.
+
+Langkah 4 — Pengaturan klaim
+
+Minta konfigurasi:
+
+- Total claim limit.
+- Per-user claim limit.
+- Expiration.
+- Status.
+- Cooldown jika didukung.
+
+Gunakan default yang aman jika owner tidak mengisi opsi yang tidak wajib.
+
+Langkah 5 — Ringkasan
+
+Tampilkan:
+
+- Nama redeem.
+- Kode.
+- Deskripsi.
+- Reward utama.
+- Reward tambahan.
+- Batas klaim.
+- Masa berlaku.
+- Status.
+
+Sediakan pilihan:
+
+- Konfirmasi.
+- Edit.
+- Batalkan.
+
+Langkah 6 — Penyimpanan
+
+Setelah owner mengonfirmasi:
+
+- Validasi ulang seluruh konfigurasi di backend.
+- Simpan redeem ke database.
+- Simpan audit log.
+- Tampilkan notifikasi berhasil atau pesan error yang jelas.
+
+Jangan menyatakan redeem berhasil dibuat sebelum transaksi database berhasil.
+
+FALLBACK WHATSAPP
+
+Jika interactive list atau form tidak didukung oleh library atau platform:
+
+- Gunakan menu teks bertahap.
+- Pertahankan seluruh langkah konfigurasi.
+- Pertahankan validasi.
+- Pertahankan ringkasan.
+- Pertahankan konfirmasi.
+- Jangan menghilangkan fitur hanya karena tampilan interaktif tidak tersedia.
+
+16. REDEEM USER FLOW
+
+Buat sistem klaim redeem untuk pengguna.
+
+Command utama:
+".redeem"
+
+Alur:
+
+1. Pengguna mengirim kode redeem.
+2. Backend memvalidasi kode.
+3. Periksa status kode.
+4. Periksa masa berlaku.
+5. Periksa total batas klaim.
+6. Periksa batas klaim per pengguna.
+7. Periksa cooldown jika berlaku.
+8. Validasi seluruh reward.
+9. Jalankan transaksi pemberian reward.
+10. Simpan riwayat klaim.
+11. Tampilkan hasil klaim.
+
+Jika gagal:
+
+- Jangan memberikan reward sebagian tanpa aturan transaksi yang jelas.
+- Jangan mencatat klaim berhasil.
+- Berikan pesan kegagalan yang sesuai.
+- Simpan log kegagalan jika diperlukan.
+
+Jika berhasil:
+
+- Tampilkan nama redeem.
+- Tampilkan reward yang benar-benar diterima.
+- Tampilkan status klaim.
+
+Jangan membocorkan data pengguna lain melalui pesan klaim.
+
+17. REDEEM COMMAND REGISTRY
+
+Integrasikan command berikut apabila belum tersedia dan sesuai dengan arsitektur command manager:
+
+- ".addredeem" — Membuat kode redeem melalui wizard interaktif.
+- ".listredeem" — Menampilkan daftar redeem.
+- ".redeeminfo" — Menampilkan detail kode redeem.
+- ".editredeem" — Mengedit konfigurasi redeem.
+- ".delredeem" — Menghapus kode redeem.
+- ".redeem" — Mengklaim kode redeem.
+- ".redeemhistory" — Melihat riwayat klaim sesuai permission.
+- ".redeemstats" — Melihat statistik redeem.
+- ".redeemdisable" — Menonaktifkan redeem.
+- ".redeemenable" — Mengaktifkan redeem.
+- ".redeemreset" — Mengatur ulang batas klaim sesuai permission dan konfirmasi.
+
+Ketentuan:
+
+- Owner-only untuk pengelolaan redeem.
+- Pengguna biasa hanya dapat melakukan klaim.
+- Permission harus diperiksa di backend.
+- Jangan menganggap command telah tersedia sebelum diimplementasikan.
+- Jangan membuat command duplikat jika fungsi setara sudah ada.
+
+18. DATABASE & TRANSACTION SECURITY
+
+Bangun sistem redeem dengan integritas transaksi yang kuat.
+
+Gunakan:
+
+- Unique redeem code.
+- Server-side validation.
+- Atomic transaction.
+- Duplicate claim prevention.
+- Claim limit enforcement.
+- Per-user claim enforcement.
+- Expiration validation.
+- Reward handler validation.
+- Permission validation.
+- Audit logging.
+- Error handling.
+- Transaction rollback jika proses pemberian reward gagal.
+
+Pastikan dua klaim bersamaan tidak dapat melewati batas klaim.
+
+Pastikan pengguna tidak menerima reward dua kali akibat retry, koneksi terputus atau pengiriman ulang request.
+
+Gunakan idempotency key atau mekanisme setara jika sesuai dengan arsitektur backend.
+
+Jangan mempercayai nilai reward yang dikirim langsung oleh client atau WhatsApp user.
+
+Backend harus membaca konfigurasi redeem yang tersimpan dan menentukan reward berdasarkan data resmi di database.
+
+DELETE & RESET
+
+- Menghapus redeem tidak boleh menghapus claim history.
+- Menonaktifkan redeem tidak boleh mengubah reward yang telah diterima.
+- Reset claim harus memiliki konfirmasi.
+- Perubahan reward harus masuk audit log.
+- Perubahan batas klaim harus masuk audit log.
+- Perubahan status harus masuk audit log.
+- Jangan menghapus bukti transaksi secara diam-diam.
+
+19. REWARD SYSTEM INTEGRATION
+
+Integrasikan Redeem Management dengan sistem ekonomi dan reward Freya-san Hub.
+
+Hubungkan reward yang benar-benar tersedia dengan:
+
+- User balance.
+- EXP system.
+- Level system.
+- Game reward system.
+- Achievement system apabila tersedia.
+- Badge system apabila tersedia.
+- Sistem tambahan lain apabila memiliki handler.
+
+Jangan membuat saldo, EXP, level atau reward hanya berupa tampilan frontend.
+
+Reward harus benar-benar masuk ke sistem yang menjadi sumber datanya.
+
+Jika reward ditujukan untuk game:
+
+- Pastikan reward diterima pada akun pengguna yang benar.
+- Jangan mencampur data reward private dan grup.
+- Jangan mengirim reward ke akun yang salah.
+- Catat sumber pemberian reward.
+- Catat ID transaksi.
+
+Redeem merupakan mekanisme pemberian hadiah, bukan sistem taruhan atau perjudian. Jangan membuat fitur taruhan, wagering atau penukaran uang nyata melalui sistem ini.
+
+20. REDEEM AUDIT & TESTING
+
+Sebelum implementasi, audit:
+
+- Database user.
+- Balance system.
+- EXP system.
+- Level system.
+- Reward registry.
+- Game reward system.
+- Command manager.
+- WhatsApp interactive support.
+- Permission system.
+- Analytics.
+- Audit log.
+
+Setelah implementasi, lakukan pengujian:
+
+1. Membuat redeem.
+2. Mengedit redeem.
+3. Menghapus redeem.
+4. Mengaktifkan redeem.
+5. Menonaktifkan redeem.
+6. Mengklaim redeem valid.
+7. Mengklaim kode tidak ditemukan.
+8. Mengklaim kode kedaluwarsa.
+9. Mengklaim kode yang sudah mencapai batas.
+10. Mengklaim ulang kode yang sudah pernah diklaim.
+11. Menguji batas klaim per pengguna.
+12. Menguji klaim bersamaan.
+13. Menguji reward balance.
+14. Menguji reward EXP.
+15. Menguji reward level.
+16. Menguji reward tambahan yang memiliki handler.
+17. Menguji reward yang handler-nya tidak tersedia.
+18. Menguji transaksi gagal.
+19. Menguji retry.
+20. Menguji audit log.
+21. Menguji riwayat klaim setelah redeem dihapus.
+22. Menguji permission owner dan pengguna biasa.
+23. Menguji interactive form.
+24. Menguji fallback text menu.
+
+Laporkan:
+
+- Fitur yang sudah benar-benar berjalan.
+- Fitur yang belum tersedia.
+- Reward handler yang sudah aktif.
+- Reward handler yang belum tersedia.
+- Hasil pengujian.
+- Kendala.
+- Perubahan database.
+- Perubahan command registry.
+- Risiko atau masalah yang ditemukan.
+
+Jangan menyatakan sistem selesai hanya karena menu Redeem Management sudah tampil.
+
+---
+
+PART C — FINAL INTEGRATION & PROJECT RULES
+
+21. MODULAR INTEGRATION
+
+Integrasikan seluruh tambahan ini dengan arsitektur Freya-san Hub yang sudah ada.
+
+JKT48 Classification dan Redeem Management adalah dua modul berbeda.
+
+JKT48 Classification:
+
+- Berada dalam 48GROUP CENTER.
+- Terhubung dengan Member Intelligence.
+- Terhubung dengan History & Archive.
+- Terhubung dengan 48GROUP GAME CENTER.
+
+Redeem Management:
+
+- Berada dalam sistem pengelolaan platform.
+- Memiliki dashboard sendiri.
+- Memiliki command WhatsApp sendiri.
+- Terhubung dengan user balance, EXP, level dan reward registry.
+- Dapat digunakan oleh game umum dan game 48Group apabila reward handler mendukungnya.
+
+Jangan menempatkan Redeem Management sebagai submenu Difficulty Explorer atau Team Explorer.
+
+22. DATA CONSISTENCY
+
+Seluruh modul harus menggunakan sumber data yang konsisten.
+
+Hindari:
+
+- Duplikasi database member.
+- Duplikasi reward registry.
+- Perbedaan nilai balance antara dashboard dan WhatsApp.
+- Perbedaan EXP antara game dan sistem user.
+- Klasifikasi era yang berbeda di setiap modul.
+- Reward yang ditampilkan tetapi tidak bisa diberikan.
+- Klaim redeem yang tidak tercatat.
+- Data historis yang terhapus.
+
+Gunakan service dan registry terpusat jika sesuai dengan arsitektur.
+
+23. IMPLEMENTATION PRIORITY
+
+Lakukan implementasi secara bertahap berdasarkan dependensi.
+
+Prioritas:
+
+1. Audit arsitektur dan database.
+2. Pastikan sistem data 48Group tersedia.
+3. Implementasikan JKT48 classification registry.
+4. Implementasikan Difficulty Explorer.
+5. Implementasikan Team Explorer.
+6. Integrasikan Member Archive dan game.
+7. Audit user balance, EXP dan level.
+8. Implementasikan reward registry.
+9. Implementasikan Redeem Management dashboard.
+10. Implementasikan ".addredeem" wizard.
+11. Implementasikan klaim redeem.
+12. Implementasikan claim history dan analytics.
+13. Integrasikan dengan game reward system.
+14. Jalankan pengujian keseluruhan.
+
+Urutan dapat disesuaikan jika dependensi teknis mengharuskannya, tetapi jangan mengabaikan pengujian dan integritas data.
+
+24. FINAL STRUCTURE
+
+Struktur konseptual:
+
+48GROUP CENTER
+└── JKT48 Intelligence
+├── Difficulty Explorer
+│   ├── Level 1 — Mudah–Menengah
+│   │   └── New Era – Fight Era
+│   ├── Level 2 — Menengah
+│   │   └── Era One
+│   └── Level 3 — Sulit
+│       └── Group Release Era – Pre-One Era
+│
+├── Team Explorer
+│   ├── Old
+│   │   ├── Team J
+│   │   ├── Team KIII
+│   │   └── Team T
+│   ├── New
+│   │   ├── Team Love
+│   │   ├── Team Dream
+│   │   └── Team Passion
+│   └── Other / Unassigned
+│
+├── Member Archive
+├── Generation Archive
+├── Era & History Archive
+└── 48GROUP GAME CENTER
+└── JKT48 Game Integration
+
+PLATFORM MANAGEMENT
+└── Redeem Management
+├── Redeem Codes
+├── Reward Builder
+├── Claim History
+├── Redeem Analytics
+└── Redeem Settings
+
+WHATSAPP COMMAND
+├── .addredeem
+├── .listredeem
+├── .redeeminfo
+├── .editredeem
+├── .delredeem
+├── .redeem
+├── .redeemhistory
+├── .redeemstats
+├── .redeemdisable
+├── .redeemenable
+└── .redeemreset
+
+Struktur ini merupakan rancangan navigasi dan integrasi. Gunakan modul yang sudah tersedia jika memiliki fungsi setara. Jangan membuat duplikasi.
+
+25. FINAL REQUIREMENTS
+
+UTAMAKAN:
+
+- Cakupan sejarah JKT48 yang lengkap.
+- Klasifikasi era dan level yang benar.
+- Seluruh generasi dan member, termasuk graduate.
+- Navigasi dashboard yang ringkas.
+- Interactive list yang benar-benar berfungsi.
+- Database yang konsisten.
+- Reward registry yang nyata.
+- Redeem yang dapat dibuat melalui dashboard dan WhatsApp.
+- Reward yang benar-benar diberikan ke akun pengguna.
+- Keamanan transaksi dan pencegahan klaim ganda.
+- Riwayat dan audit yang dapat ditelusuri.
+- Integrasi dengan game yang benar-benar tersedia.
+- Testing sebelum menyatakan fitur selesai.
+
+JANGAN MEMBUAT DATA PALSU, JANGAN MENGANGGAP CONTOH SEBAGAI KEPUTUSAN FINAL, JANGAN MENAMPILKAN FITUR YANG BELUM DIDUKUNG SEBAGAI FITUR AKTIF, DAN JANGAN MENGKLAIM IMPLEMENTASI SELESAI TANPA PENGUJIAN NYATA.

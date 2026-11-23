@@ -1,0 +1,6 @@
+{
+  "name": "Freya-san Hub",
+  "description": "Integrated WhatsApp Bot Platform Digital, 48Group Intelligence & Archive Center, and Multiplayer Game System.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

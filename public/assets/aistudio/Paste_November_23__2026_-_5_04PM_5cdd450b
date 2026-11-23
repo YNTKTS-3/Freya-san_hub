@@ -1,0 +1,2610 @@
+MASTER PROMPT: FREYA-SAN HUB
+
+WhatsApp Bot Platform Digital
+
+Project Name: Freya-san Hub
+Tagline: WhatsApp Bot Platform Digital
+WhatsApp Bot Name: Freya-san bot by Pak Ujan
+Version: 5.0
+Primary Language: Indonesian
+Supported Languages: Indonesian, English, Japanese
+Default Theme: System
+Visual Identity: Modern technology platform with blue, white, and pink accents, combined with a JKT48-inspired website layout and dark theme option.
+
+---
+
+1. PERINTAH UTAMA
+
+Bertindaklah sebagai senior full-stack developer, software architect, database engineer, UI/UX designer, AI engineer, security engineer, dan QA engineer.
+
+Bangun Freya-san Hub dari nol, sebagai platform WhatsApp bot yang lengkap, bukan sekadar demo atau template tampilan.
+
+Sistem harus terdiri dari:
+
+1. Website publik.
+2. Dashboard administrator.
+3. Backend API.
+4. WhatsApp bot engine.
+5. Command management system.
+6. Plugin management system.
+7. AI management system.
+8. Automation engine.
+9. Database terpusat.
+10. Analytics dan monitoring.
+11. 48Group Intelligence Center.
+12. Game Center.
+13. User, group, subscription, balance, EXP, dan redeem management.
+14. Sistem keamanan dan permission.
+15. Dokumentasi dan pengujian.
+
+Jangan menggunakan implementasi lama yang rusak sebagai fondasi. Lakukan pembangunan ulang dengan arsitektur yang bersih.
+
+Namun, pembangunan ulang bukan berarti menghapus fitur lama. Semua command dan alias dari inventaris di bagian bawah wajib dipertahankan.
+
+Aturan ADD ONLY, NEVER REMOVE
+
+- Jangan menghapus command yang sudah terdaftar.
+- Jangan menghapus alias.
+- Jangan menghilangkan command yang memiliki nama mirip.
+- Jangan menghilangkan game.
+- Jangan menghilangkan kategori.
+- Jangan mengganti nama command kecuali koreksi atau penggantian yang secara eksplisit diperintahkan dalam dokumen ini.
+- Duplikasi yang sengaja dicantumkan harus dicatat dan diaudit, bukan dihilangkan tanpa dokumentasi.
+- Fitur yang belum diketahui fungsinya tetap dicatat sebagai pending specification, bukan dihapus.
+- Fitur yang belum mempunyai integrasi eksternal harus tetap memiliki struktur modul, dokumentasi, dan status implementasi yang jujur.
+- Jangan menyatakan fitur sudah berfungsi apabila belum diuji.
+
+Semua prefix harus aktif sejak instalasi awal. Jangan meminta owner mengaktifkan prefix satu per satu.
+
+Setiap command harus memiliki handler nyata atau status implementasi yang jelas. Jangan membuat command palsu yang hanya mengirim balasan seolah-olah berhasil.
+
+---
+
+2. IDENTITAS DAN KONFIGURASI OWNER
+
+Gunakan konfigurasi berikut melalui environment variables:
+
+PROJECT_NAME=Freya-san Hub
+PROJECT_VERSION=5.0
+BOT_NAME=Freya-san bot by Pak Ujan
+OWNER_NUMBER=+6285129878352
+DEFAULT_LANGUAGE=id
+DEFAULT_THEME=system
+
+Ketentuan:
+
+- Nomor owner merupakan konfigurasi privat.
+- Jangan tampilkan nomor owner pada halaman publik, dokumentasi publik, atau menu umum.
+- Nomor owner hanya dapat dilihat oleh sistem dan pihak yang memiliki izin.
+- Jangan menanamkan API key, password, token, atau kredensial langsung ke source code.
+- Gunakan ".env" dan secret management.
+- Sediakan konfigurasi owner yang dapat diubah secara aman dari dashboard.
+
+---
+
+3. REFERENSI WEBSITE
+
+Website harus menggabungkan referensi berikut:
+
+A. Referensi struktur: JKT48.com
+
+Gunakan https://jkt48.com/ sebagai referensi utama untuk gaya penyajian informasi.
+
+Pelajari dan adaptasikan:
+
+- Header dan navigasi yang rapi.
+- Banner atau featured content.
+- Kartu informasi yang terorganisasi.
+- Tampilan berita dan pembaruan terbaru.
+- Jadwal kegiatan.
+- Informasi anggota.
+- Informasi grup.
+- Halaman detail dengan struktur yang mudah dibaca.
+- Hierarki informasi dan navigasi yang konsisten.
+- Pengalaman pengguna yang nyaman di perangkat mobile.
+
+Jangan menyalin logo, foto, desain eksklusif, kode, atau aset resmi JKT48. Buat identitas visual Freya-san Hub sendiri dengan inspirasi tata letak dan pengalaman pengguna.
+
+B. Referensi teknologi: Wibusoft
+
+Gunakan Wibusoft sebagai referensi untuk:
+
+- Struktur fitur bot.
+- Pengelompokan command.
+- Kemudahan menemukan fitur.
+- Pengelolaan layanan bot.
+- Dashboard dan manajemen command.
+- Sistem langganan.
+- Pengelolaan grup.
+- Sistem bantuan dan dokumentasi.
+
+Jangan menyalin kode atau identitas merek Wibusoft.
+
+C. Identitas visual
+
+Gunakan:
+
+- Biru sebagai warna utama.
+- Putih sebagai warna pendamping.
+- Pink sebagai aksen.
+- Dark mode sebagai pilihan tema.
+- Light mode sebagai pilihan tema.
+- System mode mengikuti perangkat.
+- Tipografi modern dan mudah dibaca.
+- Desain responsif untuk Android, iOS, tablet, dan desktop.
+
+Website harus terlihat seperti produk teknologi profesional, bukan sekadar halaman bot sederhana.
+
+---
+
+4. WEBSITE PUBLIK
+
+Buat halaman publik berikut.
+
+4.1 Homepage
+
+Tampilkan:
+
+- Hero section Freya-san Hub.
+- Deskripsi platform.
+- Tombol navigasi ke dokumentasi.
+- Daftar fitur utama.
+- Statistik sistem yang memang tersedia.
+- Status layanan bot.
+- Informasi pembaruan.
+- Fitur unggulan.
+- Preview dashboard.
+- Bagian 48Group Center.
+- Footer dengan informasi proyek.
+
+4.2 Features
+
+Tampilkan katalog fitur:
+
+- AI.
+- Downloader.
+- Game.
+- Group Management.
+- Information.
+- Owner Tools.
+- Random.
+- Search.
+- Sticker.
+- Text Maker.
+- Tools.
+- 48Group Center.
+
+Setiap fitur memiliki deskripsi, status, persyaratan, dan cara penggunaan.
+
+4.3 Command Explorer
+
+Buat halaman pencarian command dengan:
+
+- Search berdasarkan nama command.
+- Filter kategori.
+- Filter prefix.
+- Filter status.
+- Deskripsi fungsi.
+- Contoh penggunaan.
+- Permission.
+- Kebutuhan API atau plugin.
+- Status implementasi.
+- Status aktif/nonaktif.
+
+Jangan menampilkan command owner kepada pengguna publik tanpa izin.
+
+4.4 Documentation
+
+Buat dokumentasi:
+
+- Getting Started.
+- Cara menghubungkan bot.
+- Daftar prefix.
+- Daftar command.
+- Cara menggunakan command.
+- Group management.
+- AI configuration.
+- Game Center.
+- 48Group Center.
+- Dashboard.
+- Subscription.
+- Redeem.
+- Troubleshooting.
+- FAQ.
+- Security.
+
+4.5 Status Page
+
+Tampilkan status komponen:
+
+- WhatsApp connection.
+- Backend API.
+- Database.
+- AI provider.
+- Plugin.
+- Downloader provider.
+- Automation.
+- Scheduler.
+- Dashboard.
+
+Status harus berasal dari health check nyata.
+
+4.6 News dan Changelog
+
+Tampilkan:
+
+- Versi terbaru.
+- Fitur baru.
+- Perbaikan bug.
+- Perubahan sistem.
+- Riwayat pembaruan.
+- Tanggal publikasi.
+
+---
+
+5. DASHBOARD ADMINISTRATOR
+
+Dashboard merupakan pusat pengelolaan Freya-san Hub.
+
+Buat sidebar navigasi yang dapat dibuka dan ditutup, pencarian menu, breadcrumb, notifikasi, dan tampilan responsif.
+
+Modul dashboard wajib mencakup:
+
+1. Overview.
+2. Live Chat Monitor.
+3. Command Manager.
+4. Plugin Manager.
+5. User & Contact Manager.
+6. Group Manager.
+7. File Manager.
+8. AI Configuration.
+9. Connection Manager.
+10. Automation Manager.
+11. Logs & Analytics.
+12. Terminal / Console.
+13. Backup & Restore.
+14. Settings.
+
+Tambahkan modul berikut:
+
+5.1 Overview
+
+- Status bot.
+- Total pengguna.
+- Total grup.
+- Jumlah command.
+- Command aktif.
+- Command nonaktif.
+- Command paling sering digunakan.
+- Command jarang digunakan.
+- Command tidak pernah digunakan.
+- Penggunaan AI.
+- Statistik error.
+- Statistik pesan.
+- Status koneksi.
+- Penggunaan resource.
+
+5.2 Live Chat Monitor
+
+- Pantau aktivitas pesan yang memang dapat diakses sistem.
+- Filter berdasarkan pengguna dan grup.
+- Pencarian riwayat.
+- Informasi waktu.
+- Status pemrosesan.
+- Status error.
+- Kontrol privasi.
+- Batasi akses berdasarkan permission.
+
+Jangan membuat fitur pemantauan yang diam-diam mengambil pesan privat tanpa dasar izin yang sah.
+
+5.3 Command Manager
+
+Ini salah satu modul terpenting.
+
+Sediakan:
+
+- Daftar seluruh command.
+- Search command.
+- Filter kategori.
+- Filter prefix.
+- Enable command.
+- Disable command.
+- Enable kategori.
+- Disable kategori.
+- Enable beberapa command sekaligus.
+- Disable beberapa command sekaligus.
+- Pengaturan permission.
+- Pengaturan cooldown.
+- Pengaturan limit.
+- Pengaturan balance reward.
+- Pengaturan EXP.
+- Pengaturan deskripsi.
+- Pengaturan alias.
+- Riwayat perubahan.
+- Statistik penggunaan.
+
+Sediakan laporan:
+
+- Most Used Commands.
+- Least Used Commands.
+- Never Used Commands.
+- Failed Commands.
+- Commands With Highest Error Rate.
+- Commands Requiring API.
+- Commands Without Handler.
+- Commands Pending Specification.
+
+Jangan pernah menonaktifkan command secara otomatis karena jarang digunakan. Owner yang menentukan.
+
+5.4 Plugin Manager
+
+- Tambah plugin.
+- Hapus plugin.
+- Aktifkan/nonaktifkan plugin.
+- Konfigurasi plugin.
+- API key.
+- Permission plugin.
+- Health check.
+- Riwayat penggunaan.
+- Status integrasi.
+- Error log.
+
+5.5 User & Contact Manager
+
+- Daftar pengguna.
+- Profil pengguna.
+- Nomor WhatsApp.
+- Nama WhatsApp.
+- Balance.
+- EXP.
+- Level.
+- Limit.
+- Premium.
+- Riwayat penggunaan.
+- Perangkat yang terhubung.
+- Pengaturan privasi.
+- Ban dan unban.
+- Pencarian pengguna.
+
+Batasi akses terhadap informasi pribadi sesuai permission.
+
+5.6 Group Manager
+
+- Daftar grup.
+- ID grup.
+- Nama grup.
+- Owner grup.
+- Admin grup.
+- Jumlah anggota.
+- Status sewa.
+- Status permanen.
+- Masa aktif.
+- Fitur anti.
+- Welcome settings.
+- Group settings.
+- Statistik aktivitas.
+- Riwayat command grup.
+
+5.7 File Manager
+
+- Daftar file.
+- Upload.
+- Download.
+- Preview.
+- Rename.
+- Delete.
+- Search.
+- Pengelompokan.
+- Batas ukuran.
+- Validasi MIME.
+- Proteksi file berbahaya.
+
+5.8 AI Configuration
+
+- Provider.
+- API key.
+- Model.
+- Temperature.
+- Max tokens.
+- System prompt.
+- Persona.
+- Fallback.
+- Pengaturan gambar.
+- Pengaturan suara.
+- Pengaturan bahasa.
+- Penggunaan dan biaya.
+- Riwayat permintaan.
+- Pengujian provider.
+
+5.9 Connection Manager
+
+- WhatsApp connection.
+- Session.
+- QR code.
+- Reconnect.
+- Disconnect.
+- Status koneksi.
+- Riwayat koneksi.
+- Backup session.
+- Error handling.
+
+5.10 Automation Manager
+
+- Scheduled task.
+- Trigger.
+- Event.
+- Recurring task.
+- Queue.
+- Retry.
+- Task history.
+- Pause/resume.
+- Approval workflow.
+- Failure notification.
+
+5.11 Logs & Analytics
+
+- Command log.
+- API log.
+- Error log.
+- Security log.
+- User activity.
+- Group activity.
+- AI usage.
+- Plugin usage.
+- Performance.
+- Export laporan.
+
+5.12 Terminal / Console
+
+Buat console administrator dengan permission ketat.
+
+- Command execution yang diizinkan.
+- Log output.
+- Error output.
+- Audit trail.
+- Batas waktu eksekusi.
+- Proteksi akses.
+
+Jangan menyediakan eksekusi shell bebas tanpa autentikasi dan pembatasan.
+
+5.13 Backup & Restore
+
+- Backup database.
+- Backup konfigurasi.
+- Backup command.
+- Backup session secara aman.
+- Restore.
+- Backup schedule.
+- Backup history.
+- Validasi file backup.
+- Enkripsi data sensitif.
+
+5.14 Settings
+
+- General.
+- Language.
+- Theme.
+- Prefix.
+- Security.
+- Owner.
+- Database.
+- API.
+- Notification.
+- Privacy.
+- Blue Tick Control.
+- Maintenance Mode.
+
+5.15 Blue Tick Control WhatsApp
+
+Tambahkan pengaturan ON/OFF untuk kontrol tanda centang biru WhatsApp.
+
+- Owner dapat mengatur dari dashboard.
+- Tampilkan status aktif/nonaktif.
+- Sinkronkan dengan konfigurasi bot.
+- Catat perubahan.
+- Jangan mengklaim fitur bekerja jika library WhatsApp yang digunakan tidak mendukungnya.
+
+---
+
+6. SISTEM MULTIBAHASA
+
+Sediakan:
+
+- Bahasa Indonesia.
+- English.
+- 日本語.
+
+Pengaturan bahasa dapat berbeda untuk:
+
+- Owner.
+- Pengguna.
+- Grup.
+- Dashboard.
+
+Sediakan:
+
+- Language selector.
+- Translation files.
+- Fallback language.
+- Deteksi bahasa jika memungkinkan.
+- Penyimpanan preferensi.
+- Pengaturan bahasa per grup.
+
+Gunakan bahasa Indonesia sebagai bahasa utama operasional bot.
+
+Jangan mencampurkan teks bahasa secara tidak konsisten.
+
+---
+
+7. PREFIX SYSTEM
+
+Prefix wajib tersedia:
+
+.
+,
+?
+!
+*
+@
+#
+$
+&
+/
+
+Jumlah: 10 prefix.
+
+Setiap prefix harus aktif sejak instalasi awal.
+
+7.1 Dua bentuk penulisan
+
+Sistem wajib mendukung command tanpa spasi maupun dengan spasi setelah prefix.
+
+Contoh:
+
+.menu
+. menu
+
+,ping
+, ping
+
+?help
+? help
+
+!owner
+! owner
+
+Dukungan spasi harus konsisten untuk semua prefix.
+
+Jangan membuat parser terpisah untuk setiap prefix. Gunakan satu parser utama yang dapat mengenali semua prefix.
+
+7.2 Ketentuan parser
+
+- Normalisasi input.
+- Deteksi prefix.
+- Deteksi command.
+- Deteksi argumen.
+- Deteksi mention.
+- Deteksi reply.
+- Deteksi media.
+- Validasi permission.
+- Validasi cooldown.
+- Validasi limit.
+- Eksekusi handler.
+- Penanganan error.
+
+Jangan menganggap tanda baca yang berada di tengah kalimat sebagai prefix.
+
+Jangan mengubah isi argumen pengguna secara tidak sengaja.
+
+7.3 Owner Prefix Manager
+
+Sediakan command:
+
+.prefix
+.listprefix
+.addprefix
+.delprefix
+.resetprefix
+
+Owner dapat:
+
+- Melihat prefix aktif.
+- Menambahkan prefix.
+- Menghapus prefix tambahan.
+- Mengembalikan prefix default.
+- Mengatur urutan.
+- Melihat statistik penggunaan prefix.
+
+Sepuluh prefix default wajib dipertahankan. Owner hanya boleh mengubahnya melalui tindakan eksplisit.
+
+---
+
+8. INTERACTIVE LIST MENU
+
+Gunakan interactive list menu WhatsApp bertingkat.
+
+Tujuannya supaya pengguna tidak harus membaca seluruh daftar command dalam satu pesan panjang.
+
+Struktur utama:
+
+MENU UTAMA
+├── AI
+├── DOWNLOAD
+├── GAME
+│   └── 48GROUP
+├── GENERAL
+├── GROUP
+├── INFO
+├── OWNER
+├── RANDOM
+├── SEARCH
+├── STICKER
+├── TEXTMAKER
+└── TOOLS
+
+Setiap kategori membuka submenu.
+
+Setiap submenu menampilkan:
+
+- Nama fitur.
+- Deskripsi singkat.
+- Command.
+- Contoh penggunaan.
+- Kembali.
+- Menu utama.
+
+Buat navigasi bertingkat dengan pagination bila diperlukan.
+
+Jika WhatsApp library atau jenis pesan tidak mendukung interactive list:
+
+- Gunakan fallback text menu.
+- Tampilkan kategori secara bertahap.
+- Sediakan nomor pilihan.
+- Sediakan tombol atau command kembali jika didukung.
+- Jangan membuat menu menjadi tidak bisa digunakan.
+
+Command manual tetap harus berfungsi walaupun menu interaktif gagal.
+
+8.1 Menu OWNER
+
+Menu owner hanya bisa dilihat dan digunakan oleh owner atau role yang diberikan izin.
+
+8.2 Menu GROUP
+
+Menu group menyesuaikan izin admin dan pengaturan grup.
+
+8.3 Menu 48GROUP
+
+Buat menu khusus untuk seluruh fitur 48Group Center.
+
+---
+
+9. COMMAND INVENTORY
+
+Semua command di bawah wajib masuk ke database registry.
+
+Jangan menghilangkan command yang belum memiliki dokumentasi. Tandai statusnya sesuai kondisi.
+
+Nama command harus mengikuti ejaan yang benar di daftar ini.
+
+9.1 AI
+
+aiimage
+aiimg
+byenexara
+byeopenai
+editimg
+hitamkan
+jadianime
+nexara
+openai
+toanime
+voicejapan
+
+9.2 DOWNLOAD
+
+douyin
+facebook
+igdl
+igreel
+igstory
+igtv
+mediafire
+otakudesudl
+pindl
+spotify
+threads
+tiktokmusic
+tiktoknowm
+tiktokslidevideo
+tiktokwm
+twitterdl
+ytmp3
+ytmp4
+
+9.3 GAME
+
+akinator
+akinatorstart
+akinatorstop
+asahotak
+bom
+buylimit
+caklontong
+dare
+family100
+hint
+math
+nyerah
+redeem
+sambungkata
+siapakahaku
+sloth
+suit
+susunkalimat
+susunkata
+susunlirik
+tebakbendera
+tebakbom
+tebakchara
+tebakemoji
+tebakgambar
+tebakkata
+tebaklagu
+tebaklaguanime
+tebaklagukpop
+tekateki
+tfbalance
+tictactoe
+truth
+ulartangga
+undercover
+uno
+werewolf
+werewolf2
+
+9.4 GENERAL
+
+changelog
+everyone
+infobot
+menu
+owner
+ping
+resend
+runtime
+sender
+streak
+version
+
+9.5 GROUP
+
+absen
+add
+addalarm
+addbadword
+addlist
+addpoin
+addreminder
+addwhitelist
+afk
+antibadword
+antibadwordnokick
+antibot
+antidelete
+antigroupsw
+antikudeta
+antilink
+antilinkchannel
+antilinknokick
+antilinkuniversal
+antiluar
+antimentionsw
+antisticker
+antiviewonce
+antiwame
+antiwamenokick
+banmember
+belumabsen
+blacklist
+cekabsen
+cekidgroup
+cekpoint
+ceksewa
+cekwarn
+createschedulecall
+delalarm
+delbadword
+delblacklist
+delete
+deleteabsen
+deletepoin
+deletetotalpesan
+dellist
+delreminder
+delultahku
+delwarn
+delwhitelist
+demote
+demotedetector
+descgc
+disablealarm
+done
+enablealarm
+gamemode
+getlist
+groupadmin
+groupinfo
+groupschedule
+groupsetting
+grouptime
+hidetag
+kick
+kickme
+leavegc
+left
+levelling
+linkgc
+list
+listalarm
+listbadword
+listbanmember
+listblacklist
+listonline
+listpoint
+listreminder
+listtotalpesan
+listultah
+listwarn
+listwhitelist
+mulaiabsen
+mute
+pinmsg
+promote
+promotedetector
+proses
+refreshgroup
+reqjoin
+resetalarm
+resetbadword
+resetblacklist
+resetlist
+resetpoint
+resetreminder
+resettotalpesan
+resetultahku
+resetwarn
+revokelink
+setclose
+setdescgc
+setdone
+setleft
+setlefttype
+setnamegc
+setopen
+setppgc
+setppgcpanjang
+setproses
+setwarn
+setwelcome
+setwelcometype
+streakgrup
+tagall
+tfpoint
+totag
+totalpesan
+ultahku
+unbanmember
+unpinmsg
+updatelist
+uplist
+upswgroupv2
+vote
+warn
+welcome
+
+9.6 INFO
+
+balance
+cekchannel
+cekpremium
+infocovid
+infogempa
+infounsur
+kodebahasa
+level
+limit
+listban
+listblock
+listgroup
+listpremium
+profile
+report
+status
+topglobal
+toplocal
+
+9.7 OWNER
+
+accadmininvitechannel
+addbalance
+addlevel
+addlimit
+addpremium
+addpremiumgroup
+addrespon
+addsewa
+addsewathisgroup
+addxp
+anticall
+anticallnoblock
+antideletepc
+autoleavegcnosewa
+autonexara
+autoread
+autotype
+ban
+bccancel
+bcconfirm
+bcgchidetag
+bcgroup
+bchidetag
+bcmember
+bcpc
+bcpremium
+bcsewa
+bcstat
+blacklistglobal
+block
+blockpc
+broadcast
+buttonmode
+buttontojson
+call
+callloop
+callplay
+callqueue
+callskip
+callstop
+cekaccount
+cekgroupcron
+cekgroupsewa
+ceklimitakun
+cekopenaikey
+ceksewabyid
+chatgroup
+claimFreyasanredeem
+cleangroupcron
+cleangroupsewa
+clearchat
+copythumbnail
+createbutton
+createfullbutton
+createlist
+createredeem
+createtemplate
+createthumbnail
+delbalance
+delblacklistglobal
+deleteredeem
+delfreeautores
+delfreecommand
+dellevel
+dellimit
+delpremium
+delpremiumgroup
+delrespon
+delsewa
+delxp
+freeautores
+freecommand
+globalgamemode
+golink
+grabcontact
+greeting
+grouponlypremium
+inforedeem
+inviteme
+join
+leaveall
+leavegcbyid
+leavenosewa
+levellingpc
+listblacklistglobal
+listcommand
+listfreeautores
+listfreecommand
+listgroupnosewa
+listpremiumgroup
+listredeem
+listrespon
+listsewa
+listsewapermanent
+mutebc
+mutebyid
+mycontacts
+onlygroup
+onlyindo
+onlyprem
+pconlyprem
+premiumgroup
+promoteme
+public
+publicbyid
+queue
+rawmessage
+react
+reactchannel
+refreshgroupbyid
+refreshpremiumlist
+resetanonymous
+resetbalance
+resetblacklistglobal
+resetfreeautores
+resetfreecommand
+resetlevel
+resetlimit
+resetlimitreceivedgroup
+resetpremium
+resetresponse
+resetxp
+searchmessage
+self
+selfbyid
+setbio
+setcommand
+setdefaultweltype
+setlimitgroup
+setlimitreceivedgroup
+setname
+setopenaikey
+setpp
+setpppanjang
+setscript
+setwrsuit
+setwrttt
+spr
+sprx
+testbutton
+topeng
+topengx
+unban
+unblock
+unreact
+unreactchannel
+upchannel
+upres
+upsw
+upswch
+upswgroup
+upswgroupv2byid
+upswmentiongroup
+upswmentiongroupsilent
+upswpremium
+videocall
+
+9.8 RANDOM
+
+alay
+apakah
+cekkhodam
+faktaunik
+husbu
+jadian
+kapankah
+katabijak
+loli
+neko
+pantun
+ppcouple
+puisi
+quotesanime
+randomanime
+randommeme
+randomnumber
+randomtag
+rate
+siapakah
+waifu
+
+9.9 SEARCH
+
+alkitab
+alquranaudio
+artinama
+brainly
+cekidff
+cekidml
+cuaca
+googleimage
+igstalk
+ipchecker
+jadwalshalat
+lirik
+otakudesu
+otakudesuinfo
+otakudesuongoing
+pinterest
+play
+wikipedia
+ytsearch
+
+9.10 STICKER
+
+attp
+brat
+brat2
+bratvideo
+createstickerpack
+delsetwm
+emojisticker
+quickchat
+semoji
+semojimix
+setwm
+smeme
+snobg
+sticker
+stickercircle
+stickerly
+stickerwm
+takesticker
+telestick
+toimg
+trigger
+ttp
+ziptelestick
+
+9.11 TEXTMAKER
+
+avengers
+batman
+bear
+bisnissign
+blackpink
+bokeh
+cartoon
+cloud
+colorneon
+deadpool
+digitalglitch
+dropwater
+fflogo
+firework
+glitch
+glow
+graffiti
+greenneon
+halloween
+holo
+lightglow
+magma
+marvel
+narutologo
+neon
+neonlight
+pencil
+phlogo
+pubglogo
+sand
+sky
+spacetext
+thor
+thunder
+watercolor
+wetglass
+window
+wolf
+
+Catatan: sumber awal memiliki beberapa entri TEXTMAKER yang berulang. Pertahankan histori duplikasi di inventory audit, tetapi gunakan satu canonical command per nama agar registry tidak memiliki handler ganda yang membingungkan.
+
+Koreksi ejaan:
+
+- "avangers" menjadi "avengers".
+- "blankpink" menjadi "blackpink".
+
+9.12 TOOLS
+
+bass
+blown
+blur
+bratbahlil
+bratspongebob
+cekplatform
+confess
+dbase64
+dec
+deep
+dhex
+earrape
+ebase64
+ehex
+enc
+fakebca
+fakecall
+fakechios
+fakedana
+fakegc
+fakeml
+fakeovo
+fakereply
+fakestoryig
+faketweet
+fast
+fat
+folio
+font
+halah
+hartatahta
+hdsw
+hdvideo
+heleh
+hilih
+holoh
+huluh
+imagetopdf
+iqc
+iqcdark
+iqcimage
+iqcpink
+kinetictext
+kirim
+menfess
+nightcore
+nulis
+ocr
+poll
+ptvtovideo
+qrcode
+qrcodereader
+readmore
+readviewonce
+removebackground
+reverse
+robot
+screenshot
+shortlink
+slow
+smooth
+spotifycard
+swhd
+tiktokqc
+tolive
+tomp3
+toquickvideo
+tourl
+toviewonce
+tovn
+translate
+tts
+tts2
+tupai
+upscale
+wait
+
+---
+
+10. DETAIL FUNGSI COMMAND YANG SUDAH DIKONFIRMASI
+
+Gunakan informasi ini sebagai spesifikasi utama.
+
+10.1 Sloth
+
+Permainan kombinasi tiga simbol acak.
+
+Contoh konsep:
+
+- Pemain mendapatkan tiga simbol.
+- Sistem membandingkan kombinasi simbol.
+- Kombinasi tertentu mendapatkan hadiah balance virtual.
+- Kombinasi yang tidak cocok tidak mendapatkan hadiah.
+- Hasil harus acak dan transparan.
+- Sediakan riwayat permainan.
+
+Gunakan balance sebagai poin permainan virtual yang diperoleh melalui aktivitas bot. Jangan membuat taruhan, kehilangan saldo berdasarkan nominal taruhan, pembelian saldo, pencairan, atau penukaran saldo menjadi uang sungguhan.
+
+10.2 Bom
+
+Pertahankan sebagai game. Implementasikan mekanisme sesuai modul game yang tersedia dan dokumentasikan aturan, kondisi menang, kondisi kalah, serta penggunaan balance virtual.
+
+10.3 Antiluar
+
+Fungsi:
+
+Mendeteksi nomor yang bukan nomor Indonesia berdasarkan informasi kode negara nomor WhatsApp.
+
+Jika fitur aktif:
+
+- Bot dapat menghapus pesan atau mengeluarkan anggota sesuai pengaturan.
+- Sediakan pilihan sanksi.
+- Sediakan ON/OFF.
+- Sediakan pengecualian nomor.
+- Sediakan log tindakan.
+- Jangan salah mengidentifikasi nomor Indonesia hanya karena format penulisan berbeda.
+
+10.4 Antikudeta
+
+Fungsi:
+
+Melindungi jabatan owner grup.
+
+Ketika owner grup keluar dan kemudian masuk kembali serta mendapatkan jabatan admin, admin lain tidak boleh menurunkan jabatan owner tersebut.
+
+Jika admin lain melakukan demote terhadap owner:
+
+- Bot mendeteksi perubahan.
+- Bot mencatat kejadian.
+- Bot dapat mencopot jabatan admin pelaku sesuai izin dan konfigurasi grup.
+- Sediakan pengecualian dan audit log.
+
+Fitur hanya boleh bekerja jika bot memiliki izin admin yang diperlukan.
+
+10.5 Antigroupsw
+
+Mencegah anggota grup mengunggah Status WhatsApp yang menggunakan foto profil grup.
+
+Sanksi:
+
+- Peringatan.
+- Peringatan bertingkat.
+- Kick setelah 10 pelanggaran jika pengaturan tersebut dipilih.
+
+Jangan mengklaim bot dapat mendeteksi status WhatsApp jika platform atau library tidak menyediakan akses yang diperlukan. Implementasikan hanya dengan kemampuan API yang benar-benar tersedia.
+
+10.6 Antimentionsw
+
+Mencegah anggota grup membuat Status WhatsApp yang menyebut atau menandai grup.
+
+Sediakan:
+
+- ON/OFF.
+- Peringatan.
+- Pengaturan sanksi.
+- Riwayat pelanggaran.
+
+Jelaskan batas kemampuan WhatsApp secara jujur.
+
+10.7 Antibot
+
+Mencegah bot lain masuk atau beraktivitas di grup.
+
+- Bot utama menjadi bot yang diizinkan.
+- Owner dapat memasukkan bot cadangan ke whitelist.
+- Sediakan daftar bot yang diizinkan.
+- Sediakan daftar bot yang ditolak.
+- Sediakan pengecualian.
+- Jangan mengeluarkan bot cadangan milik owner yang telah diizinkan.
+
+10.8 Antideletepc
+
+Ketika bot menerima pesan yang dapat diakses lalu mendeteksi bahwa pesan tersebut dihapus:
+
+- Kirim pemberitahuan bahwa pengirim menghapus pesan.
+- Jika salinan pesan memang tersedia secara sah, tampilkan isi pesan.
+- Contoh format: "Kamu sudah menghapus pesan ini. Teksnya: "maaf ya sayang"."
+- Jangan mengklaim dapat mengambil pesan yang tidak pernah diterima atau tidak tersimpan.
+- Terapkan kontrol privasi dan retensi data.
+
+10.9 Autonexara
+
+Fungsi:
+
+Menjalankan AI Nexara secara otomatis berdasarkan konfigurasi.
+
+- Sediakan ON/OFF.
+- Sediakan pemilihan provider/model jika didukung.
+- Sediakan system prompt.
+- Sediakan fallback.
+- Sediakan pengaturan konteks.
+- Sediakan batas penggunaan.
+- Sediakan statistik penggunaan.
+
+Nexara menjadi pilihan default, tetapi arsitektur tidak boleh mengunci sistem hanya pada satu AI provider.
+
+10.10 Spr, Sprx, Topeng, Topengx
+
+Nama command dipertahankan.
+
+Fungsi belum terverifikasi. Jangan mengarang fungsi.
+
+Buat status "pending_specification" dan sediakan tempat untuk menambahkan dokumentasi setelah fungsi aslinya diketahui.
+
+10.11 Deep, Fast, Slow
+
+Nama command dipertahankan.
+
+Tempatkan berdasarkan fungsi sebenarnya setelah implementasi dan pengujian.
+
+Jangan mengasumsikan ketiganya merupakan efek audio atau gambar hanya dari nama.
+
+10.12 Folio
+
+Fungsi:
+
+Mengubah teks pengguna menjadi dokumen bergaya kertas folio.
+
+Buat pengalaman penggunaan yang sederhana, seolah-olah pengguna sedang menulis di kertas asli.
+
+Gunakan tag format sederhana.
+
+Contoh:
+
+.folio {tengah}JUDUL SKRIPSI
+{baris2}
+Isi paragraf pertama.
+Isi paragraf kedua.
+{kanan}Jakarta, 13 Juni 2029
+{baris1}
+{kanan}Hormat saya,
+{baris3}
+{kanan}Nama User
+
+Tag yang disediakan:
+
+- "{tengah}" untuk rata tengah.
+- "{kiri}" untuk rata kiri.
+- "{kanan}" untuk rata kanan.
+- "{baris1}" untuk satu baris kosong.
+- "{baris2}" untuk dua baris kosong.
+- "{baris3}" untuk tiga baris kosong.
+- "{judul}" untuk judul.
+- "{tebal}" untuk teks tebal.
+- "{miring}" untuk teks miring.
+
+Sediakan panduan interaktif:
+
+- Cara membuat judul.
+- Cara membuat paragraf.
+- Cara membuat baris kosong.
+- Cara membuat tanggal.
+- Cara membuat tanda tangan.
+- Cara membuat penutup.
+
+Tampilkan preview sebelum menghasilkan file.
+
+Gunakan font sans-serif yang cute, natural, dan mudah dibaca. Tata letak harus tetap rapi dan menyerupai dokumen sungguhan.
+
+10.13 Fakechios
+
+Ejaan benar adalah "fakechios".
+
+Fungsi belum pernah diuji oleh owner, sehingga jangan mengarang cara kerjanya.
+
+Pertahankan nama dan siapkan dokumentasi setelah fungsi terverifikasi.
+
+Semua command yang menggunakan kata "fake" harus memiliki batasan:
+
+- Beri label simulasi.
+- Jangan meniru transaksi asli untuk menipu.
+- Jangan membuat bukti pembayaran palsu yang bisa disalahgunakan.
+- Jangan membuat identitas atau percakapan palsu untuk penipuan.
+- Jangan mengklaim hasil simulasi sebagai transaksi nyata.
+
+10.14 Upswgroup
+
+Fungsi:
+
+Bot mengunggah WhatsApp Status dan menandai grup.
+
+- Tersedia untuk owner dan admin yang diizinkan.
+- Jika admin mengirim terlalu banyak permintaan, antrean dapat dialihkan ke owner.
+- Sediakan queue.
+- Sediakan cooldown.
+- Sediakan log.
+- Sediakan status upload.
+- Jangan mengirim berulang tanpa batas.
+
+10.15 Upswgroupv2byid
+
+Fungsi:
+
+Versi "upswgroup" yang menggunakan ID grup untuk membedakan grup.
+
+Tujuan:
+
+- Mengidentifikasi grup secara spesifik.
+- Menghubungkan grup dengan status sewa.
+- Membedakan grup sewaan dan grup permanen.
+- Mengelola hak akses berdasarkan ID.
+- Mencegah salah kirim ke grup lain.
+
+10.16 ClaimFreyasanredeem
+
+Ganti nama command lama "claimwibusoftredeem" menjadi "claimFreyasanredeem".
+
+Fungsi:
+
+Terhubung ke sistem redeem di dashboard.
+
+Owner dapat membuat kode redeem dengan pengaturan:
+
+- Jumlah balance.
+- Jumlah EXP.
+- Limit.
+- Premium.
+- Reward lain yang didukung.
+- Masa berlaku.
+- Jumlah klaim maksimum.
+- Batas klaim per pengguna.
+- Status aktif/nonaktif.
+
+Sediakan:
+
+- Create redeem.
+- Claim redeem.
+- Delete redeem.
+- Redeem information.
+- Redeem history.
+- Redeem analytics.
+
+Kode redeem harus unik, aman, dan tidak bisa diklaim berulang jika sudah digunakan.
+
+10.17 Golink
+
+Fungsi:
+
+Mengambil tautan grup berdasarkan ID grup.
+
+Tempatkan di menu:
+
+"OWNER → GROUP MANAGEMENT".
+
+Validasi ID grup dan permission sebelum mengembalikan tautan.
+
+10.18 Kirim
+
+Fungsi:
+
+Mengirim konten ke nomor tertentu.
+
+Format penggunaan harus sederhana.
+
+Contoh konseptual:
+
+.kirim 628xxxxxxxx Pesan yang ingin dikirim
+
+Varian owner:
+
+.kirim ke owner Pesan yang ingin dikirim
+
+Sediakan pilihan untuk menampilkan atau menyembunyikan:
+
+- Nomor WhatsApp penerima.
+- Nama WhatsApp penerima.
+
+Jangan mengirim pesan tanpa konfirmasi ketika tindakan berisiko mengirim ke banyak penerima.
+
+Sediakan audit log dan pembatasan spam.
+
+10.19 Call Commands
+
+Pertahankan:
+
+call
+callloop
+callplay
+callqueue
+callskip
+callstop
+
+Fungsi masing-masing harus diverifikasi dari dokumentasi atau implementasi asli sebelum diberi deskripsi final.
+
+Jangan mengarang fungsi hanya berdasarkan nama.
+
+Jika membutuhkan integrasi panggilan yang tidak tersedia di WhatsApp API atau library yang digunakan, jelaskan keterbatasannya dan jangan membuat simulasi yang mengaku sebagai panggilan sungguhan.
+
+10.20 Done dan Proses
+
+Pertahankan sebagai fitur pengelolaan status pekerjaan dalam grup.
+
+Sediakan:
+
+- Status proses.
+- Status selesai.
+- Penanggung jawab.
+- Waktu.
+- Riwayat.
+- Notifikasi.
+
+10.21 Reqjoin
+
+Fungsi:
+
+Mengelola permintaan anggota untuk bergabung ke grup.
+
+Sediakan:
+
+.reqjoin list
+.reqjoin approve all
+.reqjoin approve 628xxxxxxxx
+.reqjoin reject all
+.reqjoin reject 628xxxxxxxx
+
+Pastikan nama command dan alias tidak bertabrakan dengan command lain.
+
+10.22 Upswmentiongroup
+
+Fungsi:
+
+Bot mengunggah WhatsApp Status dan menyertakan mention grup.
+
+Tujuan:
+
+Menambah kemungkinan status dilihat oleh kontak yang menyimpan nomor dan anggota grup yang ditandai.
+
+Sediakan:
+
+- Upload status.
+- Mention grup.
+- Pengaturan pesan.
+- Preview.
+- Queue.
+- Cooldown.
+- Status pengiriman.
+- Log.
+
+Jangan mengklaim semua anggota atau semua kontak pasti melihat status tersebut.
+
+---
+
+11. 48GROUP INTELLIGENCE CENTER
+
+Ini merupakan salah satu modul unggulan Freya-san Hub.
+
+Buat pusat informasi, arsip, komunitas, kuis, dan analitik bertema 48Group.
+
+Prioritas awal:
+
+- JKT48.
+- AKB48.
+- SKE48.
+- NMB48.
+- HKT48.
+- NGT48.
+- STU48.
+- SNH48.
+- BNK48.
+- MNL48.
+
+Struktur harus dapat diperluas untuk grup lain.
+
+11.1 Official Identity Registry
+
+Sistem data identitas resmi.
+
+Simpan:
+
+- Nama member.
+- Nama panggilan.
+- Grup.
+- Generasi.
+- Status.
+- Tanggal bergabung.
+- Tanggal kelulusan jika tersedia.
+- Profil resmi.
+- Referensi sumber.
+- Riwayat perubahan.
+
+11.2 Member Profile Intelligence
+
+- Profil member.
+- Riwayat aktivitas.
+- Grup.
+- Generasi.
+- Informasi resmi.
+- Hubungan dengan konten.
+- Riwayat pembaruan.
+- Referensi sumber.
+
+Jangan mengarang data pribadi atau informasi yang tidak dipublikasikan secara resmi.
+
+11.3 Group Relationship Intelligence
+
+- Hubungan antargrup.
+- Sister group.
+- Transfer.
+- Kolaborasi.
+- Event bersama.
+- Sejarah hubungan.
+- Referensi resmi.
+
+11.4 Discography Intelligence
+
+- Single.
+- Album.
+- Lagu.
+- Unit song.
+- Setlist.
+- Tahun rilis.
+- Member terkait.
+- Informasi kredit jika tersedia.
+- Sumber resmi.
+
+11.5 Theater Performance Archive
+
+- Pertunjukan teater.
+- Setlist.
+- Jadwal yang tersedia.
+- Sejarah pertunjukan.
+- Arsip event.
+- Informasi pertunjukan khusus.
+- Referensi resmi.
+
+11.6 Community Interaction Center
+
+- Aktivitas komunitas.
+- Diskusi.
+- Kuis.
+- Event.
+- Leaderboard.
+- Achievement.
+- Partisipasi pengguna.
+
+11.7 Calendar & Event Intelligence
+
+- Jadwal konser.
+- Jadwal teater.
+- Event.
+- Pengumuman.
+- Event ulang tahun.
+- Event spesial.
+- Riwayat event.
+
+11.8 History & Archive Intelligence
+
+- Sejarah grup.
+- Sejarah generasi.
+- Sejarah single.
+- Sejarah album.
+- Perubahan nama.
+- Perubahan struktur.
+- Pengumuman penting.
+
+11.9 Commercial Policy Intelligence
+
+Simpan informasi resmi mengenai kebijakan komersial yang dipublikasikan, misalnya:
+
+- Aturan hadiah.
+- Aturan event.
+- Aturan merchandise.
+- Aturan penggunaan konten.
+- Aturan interaksi penggemar.
+
+Jangan membuat kebijakan sendiri seolah-olah berasal dari manajemen.
+
+11.10 Terminology Intelligence
+
+Database istilah:
+
+- Jiko.
+- Oshimen.
+- Senbatsu.
+- Undergirls.
+- Theater.
+- Handshake.
+- Meet and greet.
+- Graduation.
+- Kenkyuusei.
+- Generasi.
+- Istilah 48Group lainnya.
+
+Sertakan penjelasan dan sumber bila berkaitan dengan fakta resmi.
+
+11.11 Editorial & Fact Review
+
+Sistem verifikasi konten.
+
+Setiap informasi yang masuk harus memiliki:
+
+- Sumber.
+- Tanggal pengambilan.
+- Status verifikasi.
+- Riwayat revisi.
+- Reviewer.
+- Persetujuan owner.
+
+Data yang belum diverifikasi tidak boleh digunakan untuk kuis atau disajikan sebagai fakta resmi.
+
+11.12 Media Community
+
+- Arsip media yang diizinkan.
+- Referensi berita.
+- Link resmi.
+- Informasi event.
+- Konten komunitas.
+- Kategori media.
+
+Hormati hak cipta dan kebijakan sumber.
+
+11.13 Sponsor & Campaign Intelligence
+
+- Kampanye resmi.
+- Sponsor.
+- Kolaborasi.
+- Event promosi.
+- Riwayat kampanye.
+
+Gunakan sumber yang dapat diverifikasi.
+
+11.14 Archive Preservation
+
+- Penyimpanan metadata.
+- Referensi sumber.
+- Riwayat perubahan.
+- Arsip berita.
+- Arsip jadwal.
+- Arsip discography.
+- Arsip event.
+
+11.15 Content Preference Intelligence
+
+Mengelola preferensi konten pengguna:
+
+- Grup favorit.
+- Member favorit.
+- Jenis berita.
+- Jenis notifikasi.
+- Bahasa.
+- Topik yang diikuti.
+
+Jangan menyimpulkan preferensi sensitif tanpa dasar.
+
+11.16 Fitur kuis dan mini-games 48Group
+
+Buat paket lengkap:
+
+- Kuis JKT48.
+- Kuis AKB48.
+- Kuis SKE48.
+- Kuis NMB48.
+- Kuis HKT48.
+- Kuis NGT48.
+- Kuis STU48.
+- Kuis SNH48.
+- Kuis BNK48.
+- Kuis MNL48.
+- Tebak member.
+- Tebak lagu.
+- Tebak generasi.
+- Tebak setlist.
+- Trivia.
+- Mini-games.
+- Multiplayer WhatsApp.
+- Leaderboard global.
+- Leaderboard per grup.
+- Achievement.
+- EXP.
+- Badge.
+- Level.
+
+Data kuis harus berasal dari sumber tepercaya yang sudah diverifikasi.
+
+Jangan memakai data yang belum diverifikasi sebagai jawaban benar.
+
+11.17 Official Source Policy
+
+Untuk informasi JKT48:
+
+Prioritaskan situs resmi https://jkt48.com/.
+
+Gunakan sumber resmi lain bila informasi tidak tersedia di JKT48.com.
+
+Untuk grup internasional, prioritaskan situs resmi masing-masing grup atau manajemen terkait.
+
+Sumber tambahan dapat digunakan untuk membantu penemuan informasi, tetapi jangan mengalahkan sumber resmi tanpa alasan yang jelas.
+
+Setiap data penting harus memiliki:
+
+- URL sumber.
+- Judul sumber.
+- Waktu akses.
+- Tanggal publikasi bila tersedia.
+- Status verifikasi.
+
+Jangan mengarang:
+
+- Nama member.
+- Generasi.
+- Status member.
+- Tanggal bergabung.
+- Tanggal kelulusan.
+- Jadwal.
+- Judul lagu.
+- Setlist.
+- Pengumuman.
+- Riwayat grup.
+
+Jika data tidak ditemukan, tulis "belum terverifikasi".
+
+11.18 Data Update Workflow
+
+Alur:
+
+1. Temukan sumber.
+2. Ambil informasi.
+3. Bandingkan dengan database.
+4. Deteksi perubahan.
+5. Simpan sumber.
+6. Masukkan ke antrean verifikasi.
+7. Minta persetujuan owner.
+8. Publikasikan.
+9. Simpan histori perubahan.
+
+Jangan langsung mempublikasikan data baru yang belum mendapat persetujuan owner.
+
+---
+
+12. AI AGENT ORCHESTRATION CENTER
+
+Bangun sistem multi-agent.
+
+Fitur wajib:
+
+351. Multi-Agent Orchestration Center.
+352. AI Agent Permission Governance.
+353. Human Approval Orchestration.
+354. AI Decision Traceability.
+355. Long-Running AI Task Manager.
+356. Autonomous Action Guard.
+357. Agent Capability Benchmark.
+358. Intelligent Agent Router.
+359. AI Task Recovery Intelligence.
+360. AI Output Verification Center.
+
+Ketentuan:
+
+- Agent memiliki role dan permission.
+- Agent tidak boleh menjalankan tindakan berisiko tanpa persetujuan.
+- Semua keputusan penting memiliki audit trail.
+- Task panjang harus memiliki status.
+- Kegagalan dapat di-retry dengan batas.
+- Hasil AI harus diverifikasi jika digunakan untuk fakta.
+- Agent tidak boleh mengakses data di luar izinnya.
+
+---
+
+13. USER IDENTITY DAN DATA GOVERNANCE
+
+Implementasikan:
+
+361. Unified User Identity Governance.
+362. Privacy-Preserving Anonymous Identity.
+363. Duplicate Identity Detection.
+364. Account Merge & Separation Manager.
+365. User Data Quality Intelligence.
+366. User Attribute Governance.
+367. Cross-Module Data Access Policy.
+368. 48Group Official Identity Registry.
+369. Inactive Data Lifecycle Manager.
+370. Identity Data Reconciliation.
+371. Unified User Preference Center.
+372. Self-Service Usage Control.
+373. Self-Service Subscription Portal.
+374. User Device Management.
+375. Contextual Help Intelligence.
+376. Adaptive Onboarding Journey.
+377. Community Preference Center.
+378. Content Preference Intelligence.
+379. Settings Discovery Engine.
+380. Cross-Device Experience Synchronization.
+
+Pastikan:
+
+- Identitas tidak tercampur.
+- Data pengguna dapat dikelola.
+- Penggabungan akun memerlukan verifikasi.
+- Akses lintas modul dibatasi.
+- Preferensi dapat diubah pengguna.
+- Pengaturan tersinkronisasi secara aman.
+
+---
+
+14. GAME CENTER
+
+Semua game harus memiliki sistem yang konsisten.
+
+Sediakan:
+
+- Game registry.
+- Game session.
+- Multiplayer.
+- Turn management.
+- Timeout.
+- Score.
+- XP.
+- Balance virtual.
+- Level.
+- Achievement.
+- Leaderboard.
+- Game history.
+- Anti-cheat.
+- Game settings.
+- Group game settings.
+
+Jangan membuat game yang tidak dapat diselesaikan atau tidak memiliki kondisi akhir.
+
+Jangan membuat saldo virtual menjadi alat taruhan uang atau aset bernilai uang.
+
+---
+
+15. BALANCE, EXP, LEVEL, LIMIT, DAN REDEEM
+
+Buat sistem ekonomi virtual untuk aktivitas bot.
+
+Balance
+
+- Tambah.
+- Kurangi.
+- Transfer.
+- Riwayat.
+- Batas transaksi.
+- Audit.
+
+EXP dan Level
+
+- EXP dari aktivitas yang sah.
+- Level progression.
+- Reward.
+- Leaderboard.
+
+Limit
+
+- Limit harian.
+- Limit premium.
+- Limit grup.
+- Limit command.
+- Limit API.
+
+Redeem
+
+- Create.
+- Claim.
+- Delete.
+- Expiration.
+- Claim limit.
+- Reward configuration.
+- History.
+- Analytics.
+
+Semua transaksi harus menggunakan database transaction agar tidak terjadi saldo ganda atau data tidak konsisten.
+
+---
+
+16. ANTI SYSTEM
+
+Semua fitur anti harus memiliki pengaturan terpusat.
+
+Setiap fitur anti setidaknya menyediakan:
+
+- ON/OFF.
+- Mode tindakan.
+- Peringatan.
+- Hapus pesan jika didukung.
+- Kick jika didukung dan diizinkan.
+- Whitelist.
+- Exemption.
+- Cooldown.
+- Threshold.
+- Audit log.
+
+Jangan mengaktifkan semua fitur anti secara otomatis.
+
+Default fitur anti adalah OFF, kecuali owner secara eksplisit mengubahnya.
+
+Sediakan menu interaktif agar owner dapat memilih tindakan masing-masing fitur.
+
+Contoh:
+
+ANTILINK
+├── Status: ON/OFF
+├── Mode:
+│   ├── Hapus pesan
+│   ├── Peringatan
+│   └── Kick
+├── Whitelist
+└── Riwayat
+
+Jangan mengklaim fitur anti bekerja jika WhatsApp tidak memberikan akses teknis yang diperlukan.
+
+---
+
+17. COMMAND MANAGEMENT DAN COMMAND AUDIT
+
+Setiap command harus mempunyai metadata:
+
+- Command name.
+- Alias.
+- Category.
+- Description.
+- Handler.
+- Permission.
+- Prefix support.
+- Cooldown.
+- Limit.
+- Required provider.
+- Required plugin.
+- Status.
+- Usage count.
+- Last used.
+- Error count.
+- Implementation version.
+
+Gunakan status:
+
+- "active"
+- "inactive"
+- "pending_specification"
+- "pending_integration"
+- "under_testing"
+- "failed"
+- "deprecated"
+
+Command yang belum terverifikasi tidak boleh diberi deskripsi palsu.
+
+Sediakan command owner:
+
+.listcommand
+.setcommand
+.freecommand
+.delfreecommand
+.listfreecommand
+.listfreeautores
+.delfreeautores
+
+Tambahkan kontrol command melalui dashboard.
+
+---
+
+18. PRIVACY DAN SECURITY
+
+Wajib implementasikan:
+
+- Authentication.
+- Authorization.
+- Role-based access control.
+- Session security.
+- Password hashing.
+- Rate limiting.
+- Input validation.
+- SQL injection prevention.
+- XSS prevention.
+- CSRF protection jika relevan.
+- Secure headers.
+- API key protection.
+- Secret management.
+- Audit log.
+- Backup encryption.
+- File validation.
+- Error handling.
+- Permission checking.
+- Data retention policy.
+
+Command yang memiliki nama sensitif atau berpotensi disalahgunakan harus memiliki pembatasan.
+
+Contoh:
+
+- "readviewonce" tidak boleh digunakan untuk melewati privasi pesan sekali lihat.
+- "antideletepc" hanya menggunakan data yang memang tersedia secara sah.
+- "grabcontact" dan "mycontacts" harus dibatasi pada data yang dapat diakses dengan izin.
+- "screenshot" tidak boleh digunakan untuk mengakses perangkat orang lain.
+- "fakebca", "fakedana", "fakeovo", "fakeml", dan sejenisnya hanya boleh menjadi simulasi yang jelas, bukan alat pemalsuan bukti.
+- "call" tidak boleh melakukan spam panggilan.
+- "broadcast" harus memiliki rate limit dan kontrol penerima.
+
+---
+
+19. TECH STACK
+
+Gunakan teknologi yang stabil dan mudah dipelihara.
+
+Rekomendasi:
+
+Frontend
+
+- React.
+- TypeScript.
+- Tailwind CSS.
+- Komponen UI reusable.
+- Responsive layout.
+- Dark/light theme.
+
+Backend
+
+- Node.js.
+- TypeScript.
+- Express atau Fastify.
+
+Database
+
+- PostgreSQL sebagai database utama.
+- SQLite untuk development atau mode lokal jika diperlukan.
+- Redis jika dibutuhkan untuk queue, cache, dan session.
+
+Realtime
+
+- WebSocket atau Server-Sent Events.
+
+WhatsApp
+
+Gunakan library WhatsApp yang kompatibel dan masih dipelihara.
+
+Sebelum implementasi:
+
+- Periksa dokumentasi resmi library.
+- Periksa status pemeliharaan.
+- Periksa dukungan fitur.
+- Periksa batasan WhatsApp.
+- Jangan mengarang API.
+
+Pisahkan WhatsApp engine dari backend dashboard agar kegagalan salah satu komponen tidak merusak seluruh sistem.
+
+---
+
+20. DATABASE ARCHITECTURE
+
+Buat schema terstruktur minimal untuk:
+
+- users
+- contacts
+- groups
+- group_members
+- group_admins
+- bot_sessions
+- commands
+- command_aliases
+- command_usage
+- command_settings
+- prefixes
+- plugins
+- plugin_settings
+- ai_providers
+- ai_models
+- ai_usage
+- automations
+- scheduled_tasks
+- logs
+- errors
+- balances
+- balance_transactions
+- xp_transactions
+- levels
+- limits
+- subscriptions
+- group_subscriptions
+- redeem_codes
+- redeem_claims
+- game_sessions
+- game_scores
+- achievements
+- leaderboards
+- 48group_groups
+- 48group_members
+- 48group_generations
+- 48group_discography
+- 48group_songs
+- 48group_theater
+- 48group_events
+- 48group_sources
+- 48group_verifications
+- 48group_change_history
+- user_preferences
+- settings
+- backups
+
+Gunakan foreign key, index, unique constraint, migration, dan transaction.
+
+Jangan menyimpan semua data dalam satu file JSON.
+
+---
+
+21. TESTING
+
+Buat pengujian otomatis dan manual.
+
+Prefix Test
+
+Uji semua 10 prefix.
+
+Untuk setiap prefix, uji:
+
+- Command tanpa spasi.
+- Command dengan spasi.
+- Command dengan argumen.
+- Command dengan mention.
+- Command dengan reply.
+- Command dengan media.
+- Command tidak dikenal.
+- Command tanpa permission.
+- Command dengan cooldown.
+- Command yang dinonaktifkan.
+
+Command Test
+
+Setiap command harus memiliki:
+
+- Unit test.
+- Integration test jika diperlukan.
+- Permission test.
+- Error handling test.
+- Provider test jika memakai API eksternal.
+
+Dashboard Test
+
+- Login.
+- Permission.
+- Command enable/disable.
+- Plugin management.
+- User management.
+- Group management.
+- Backup.
+- Restore.
+- Settings.
+
+48Group Test
+
+- Sumber data.
+- Verifikasi.
+- Persetujuan owner.
+- Histori perubahan.
+- Kuis menggunakan data terverifikasi.
+- Data tidak terverifikasi tidak muncul sebagai fakta.
+
+WhatsApp Test
+
+- Connect.
+- Disconnect.
+- Reconnect.
+- Send message.
+- Receive message.
+- Group event.
+- Interactive list.
+- Fallback menu.
+- Queue.
+
+---
+
+22. DEPLOYMENT
+
+Buat panduan deployment yang realistis.
+
+Sediakan:
+
+- Development setup.
+- Production setup.
+- Environment configuration.
+- Database migration.
+- Build.
+- Start.
+- Restart.
+- Logging.
+- Monitoring.
+- Backup.
+- Restore.
+- Update.
+- Troubleshooting.
+
+Optimalkan agar dapat berjalan pada server dengan resource terbatas.
+
+Jangan mengasumsikan server memiliki RAM, CPU, storage, atau biaya tertentu sebelum diperiksa.
+
+Sediakan Docker jika sesuai, tetapi jangan menjadikan Docker sebagai satu-satunya cara menjalankan proyek.
+
+---
+
+23. WORKFLOW PEMBANGUNAN
+
+Jangan membuat seluruh proyek secara asal dalam satu langkah.
+
+Gunakan tahapan:
+
+Phase 1 — Audit dan Architecture
+
+- Audit semua command.
+- Hitung jumlah command.
+- Audit duplikasi.
+- Audit alias.
+- Buat arsitektur.
+- Buat database schema.
+- Buat project structure.
+
+Phase 2 — Core System
+
+- Parser.
+- Prefix.
+- Command registry.
+- Permission.
+- Database.
+- Logger.
+- Error handler.
+
+Phase 3 — WhatsApp Engine
+
+- Connection.
+- Session.
+- Message handler.
+- Group handler.
+- Menu.
+- Fallback.
+
+Phase 4 — Website dan Dashboard
+
+- Homepage.
+- Documentation.
+- Command Explorer.
+- Admin dashboard.
+- Settings.
+- Analytics.
+
+Phase 5 — Command Implementation
+
+- Implementasikan command berdasarkan kategori.
+- Buat handler nyata.
+- Uji setiap handler.
+- Catat kebutuhan provider.
+
+Phase 6 — AI dan Plugin
+
+- AI provider.
+- Nexara.
+- OpenAI.
+- Plugin manager.
+- Agent orchestration.
+
+Phase 7 — Game Center dan 48Group
+
+- Game engine.
+- Balance.
+- EXP.
+- Leaderboard.
+- 48Group database.
+- Source verification.
+- Owner approval.
+
+Phase 8 — Security dan QA
+
+- Security audit.
+- Automated testing.
+- Manual testing.
+- Performance testing.
+- Bug fixing.
+
+Phase 9 — Deployment
+
+- Build production.
+- Deployment guide.
+- Backup.
+- Monitoring.
+- Documentation.
+
+Jangan melaporkan semua tahap selesai sebelum benar-benar dikerjakan dan diuji.
+
+---
+
+24. INVENTORY AUDIT WAJIB
+
+Sebelum dan sesudah implementasi, buat laporan:
+
+Kategori| Jumlah sumber| Jumlah registry| Jumlah handler| Status
+AI| Hitung| Hitung| Hitung| Audit
+DOWNLOAD| Hitung| Hitung| Hitung| Audit
+GAME| Hitung| Hitung| Hitung| Audit
+GENERAL| Hitung| Hitung| Hitung| Audit
+GROUP| Hitung| Hitung| Hitung| Audit
+INFO| Hitung| Hitung| Hitung| Audit
+OWNER| Hitung| Hitung| Hitung| Audit
+RANDOM| Hitung| Hitung| Hitung| Audit
+SEARCH| Hitung| Hitung| Hitung| Audit
+STICKER| Hitung| Hitung| Hitung| Audit
+TEXTMAKER| Hitung| Hitung| Hitung| Audit
+TOOLS| Hitung| Hitung| Hitung| Audit
+
+Pastikan:
+
+- Tidak ada command yang hilang.
+- Tidak ada alias yang hilang.
+- Tidak ada kategori yang hilang.
+- Tidak ada command yang berubah tanpa izin.
+- Nama yang dikoreksi sesuai daftar.
+- "claimFreyasanredeem" digunakan sebagai nama baru.
+- Semua prefix diuji.
+- Command yang belum diketahui tetap tercatat.
+
+Sediakan laporan machine-readable dalam JSON atau CSV.
+
+---
+
+25. DELIVERABLES
+
+Hasil akhir wajib mencakup:
+
+1. Source code lengkap.
+2. Website publik.
+3. Dashboard administrator.
+4. WhatsApp bot engine.
+5. Backend API.
+6. Database schema.
+7. Database migrations.
+8. Command registry.
+9. Command handlers.
+10. Prefix parser.
+11. Interactive list menu.
+12. Fallback menu.
+13. AI integration.
+14. Plugin manager.
+15. Automation engine.
+16. Game Center.
+17. 48Group Intelligence Center.
+18. Redeem system.
+19. User management.
+20. Group management.
+21. Analytics.
+22. Logging.
+23. Security layer.
+24. Automated tests.
+25. Deployment guide.
+26. Environment example.
+27. API documentation.
+28. Admin documentation.
+29. Command documentation.
+30. Inventory audit report.
+
+---
+
+26. ACCEPTANCE CRITERIA
+
+Proyek baru dapat dinyatakan selesai jika:
+
+- Website dapat dibuka dan responsif.
+- Dashboard dapat digunakan.
+- WhatsApp bot dapat terhubung.
+- Semua 10 prefix aktif.
+- Semua prefix mendukung format dengan dan tanpa spasi.
+- Interactive list berfungsi atau fallback bekerja.
+- Command registry mencakup seluruh inventaris.
+- Tidak ada command yang dihapus.
+- Command yang sudah dinyatakan siap memiliki handler nyata.
+- Command yang belum jelas diberi status pending.
+- Owner dapat mengaktifkan dan menonaktifkan command.
+- Owner dapat melihat command yang jarang atau tidak pernah dipakai.
+- Tidak ada penonaktifan otomatis.
+- Sistem redeem berfungsi.
+- Balance dan EXP konsisten.
+- AI provider dapat dikonfigurasi.
+- Sistem 48Group menggunakan sumber yang dapat diverifikasi.
+- Data 48Group baru memerlukan persetujuan owner.
+- Dashboard memiliki audit log.
+- Pengaturan keamanan berfungsi.
+- Pengujian berhasil.
+- Dokumentasi tersedia.
+
+---
+
+27. INSTRUKSI TERAKHIR UNTUK AI CODING AGENT
+
+Jangan hanya membuat tampilan yang terlihat bagus.
+
+Bangun sistem yang benar-benar dapat digunakan.
+
+Jangan mengarang API, library, kemampuan WhatsApp, data JKT48, atau fungsi command yang belum terverifikasi.
+
+Jangan menghapus fitur hanya karena belum populer.
+
+Jangan mengubah nama command tanpa instruksi.
+
+Jangan menandai fitur selesai jika belum diuji.
+
+Jika ada fitur yang membutuhkan API berbayar, API key, akses khusus, atau layanan eksternal:
+
+1. Jelaskan kebutuhannya.
+2. Buat integrasi modular.
+3. Sediakan konfigurasi.
+4. Sediakan fallback.
+5. Tampilkan status yang jujur.
+
+Jika ada command yang belum diketahui fungsinya, pertahankan dalam registry dan buat dokumentasi pending specification.
+
+Prioritaskan kestabilan, keamanan, akurasi data, kemudahan penggunaan, dan pemeliharaan jangka panjang.
+
+Nama proyek tetap Freya-san Hub. Jangan mengganti identitas proyek ini.
+
+Mulailah dengan audit inventaris dan rancangan arsitektur. Setelah itu lanjutkan implementasi secara bertahap sampai seluruh acceptance criteria terpenuhi.
