@@ -10,6 +10,23 @@ import {
 } from '../core/gameRules';
 import { GameChatScope, GameHubDomain, GameSessionStatus } from '../core/types';
 import { addAuditLog, applyUserBalanceAndExp, db } from './db';
+import { acquireActionLock, releaseActionLock } from './abuseService';
+import { botText, normalizeBotLang } from '../core/botI18n';
+import {
+  buildUnoCardMetadata,
+  canPlayUnoCard,
+  checkUnoSessionTimeout,
+  computeStaggeredDelayMs,
+  createBomInitialState,
+  createShuffledUnoDeck,
+  normalizeUnoColor,
+  pickUndercoverWordPair,
+  PrivateDeliveryItem,
+  processBomTurn,
+  resolveStickerToUnoCard,
+  UNO_COLORS,
+  UnoColor,
+} from './multiplayerGames';
 
 export interface StartGameParams {
   gameId: string;
@@ -23,6 +40,9 @@ export interface StartGameParams {
   eraId?: string;
   teamId?: string;
   generation?: string;
+  lang?: string;
+  withMrWhite?: boolean;
+  isWw2?: boolean;
 }
 
 export interface GameStartResponse {
@@ -30,6 +50,7 @@ export interface GameStartResponse {
   sessionId?: string;
   announcement: string;
   session?: Record<string, unknown>;
+  privateDeliveries?: PrivateDeliveryItem[];
   error?: string;
 }
 
@@ -41,6 +62,7 @@ export interface GameAnswerResponse {
   announcement: string | null;
   sessionStatus: GameSessionStatus;
   state: Record<string, unknown>;
+  privateDeliveries?: PrivateDeliveryItem[];
 }
 
 const TEBAK_KATA_BANK = [
@@ -92,12 +114,25 @@ const TRUTH_OR_DARE_SAFE = {
   ],
 };
 
+export function getMaxQuizWrongAttempts(): number {
+  const row = db.prepare(`SELECT value FROM settings WHERE key = 'max_quiz_wrong_attempts'`).get() as { value: string } | undefined;
+  return Math.max(1, Number(row?.value ?? 5) || 5);
+}
+
 function generateSessionId(): string {
   const num = db.prepare('SELECT COUNT(*) as c FROM game_sessions').get() as { c: number };
   return `GAME-${String(num.c + 1).padStart(4, '0')}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
 }
 
 export function expireStaleSessions(): void {
+  // Check UNO 60s turn timeouts first (stops without auto-advancing)
+  const activeUno = db
+    .prepare(`SELECT id FROM game_sessions WHERE game_id = 'uno' AND status = 'active'`)
+    .all() as Array<{ id: string }>;
+  for (const row of activeUno) {
+    checkUnoSessionTimeout(row.id);
+  }
+
   const expired = db
     .prepare(
       `SELECT id, game_name, chat_scope FROM game_sessions
@@ -207,15 +242,9 @@ export function startGameSession(params: StartGameParams): GameStartResponse {
       exp: updatedUser.exp,
     };
   } else if (params.gameId === 'bom' || params.gameId === 'tebakbom') {
-    const bombIndex = Math.floor(Math.random() * 9);
-    state = {
-      board: Array(9).fill('?'),
-      bombIndex,
-      opened: [] as number[],
-      safeOpened: 0,
-      prompt: 'Pilih angka kotak 1 sampai 9 yang aman dari bom!',
-    };
-    promptText = 'Papan 9 kotak bom dimulai. Pilih angka 1-9.';
+    const bomInit = createBomInitialState();
+    state = bomInit;
+    promptText = `Papan ${bomInit.gridSize} kotak (${bomInit.bombCount} bom) dimulai.`;
   } else if (params.gameId === 'tebakangka') {
     const target = Math.floor(Math.random() * 100) + 1;
     state = {
@@ -232,7 +261,9 @@ export function startGameSession(params: StartGameParams): GameStartResponse {
       clue: pick.clue,
       answer: pick.answer,
       hintsUsed: 0,
-      prompt: `Petunjuk: ${pick.clue}`,
+      wrongAttempts: 0,
+      maxWrongAttempts: getMaxQuizWrongAttempts(),
+      prompt: `Petunjuk: ${pick.clue} (Maks ${getMaxQuizWrongAttempts()}x salah)`,
     };
     promptText = pick.clue;
   } else if (params.gameId === 'sambungkata') {
@@ -267,7 +298,9 @@ export function startGameSession(params: StartGameParams): GameStartResponse {
     state = {
       expression: `${a} ${op} ${b}`,
       answer: String(answer),
-      prompt: `Hitung cepat: ${a} ${op} ${b} = ?`,
+      wrongAttempts: 0,
+      maxWrongAttempts: getMaxQuizWrongAttempts(),
+      prompt: `Hitung cepat: ${a} ${op} ${b} = ? (Maks ${getMaxQuizWrongAttempts()}x salah)`,
     };
     promptText = `${a} ${op} ${b} = ?`;
   } else if (params.gameId === 'family100') {
@@ -276,7 +309,9 @@ export function startGameSession(params: StartGameParams): GameStartResponse {
       question: pick.question,
       answers: pick.answers,
       found: [] as string[],
-      prompt: `${pick.question} (Tersedia ${pick.answers.length} jawaban)`,
+      wrongAttempts: 0,
+      maxWrongAttempts: getMaxQuizWrongAttempts(),
+      prompt: `${pick.question} (Tersedia ${pick.answers.length} jawaban, maks ${getMaxQuizWrongAttempts()}x salah)`,
     };
     promptText = pick.question;
   } else if (params.gameId === 'siapakahaku') {
@@ -285,18 +320,45 @@ export function startGameSession(params: StartGameParams): GameStartResponse {
       clues: pick.clues,
       clueIndex: 0,
       answer: pick.answer,
+      wrongAttempts: 0,
+      maxWrongAttempts: getMaxQuizWrongAttempts(),
       prompt: `Petunjuk 1: ${pick.clues[0]}`,
     };
     promptText = pick.clues[0];
   } else if (params.gameId === 'tebakemoji') {
-    const pick = TEBAK_EMOJI_BANK[Math.floor(Math.random() * TEBAK_EMOJI_BANK.length)];
+    const totalEmoji = (db.prepare(`SELECT COUNT(*) as c FROM tebakemoji_questions WHERE enabled = 1`).get() as { c: number }).c;
+    const pickedDb = totalEmoji > 0
+      ? (db
+          .prepare(`SELECT * FROM tebakemoji_questions WHERE enabled = 1 LIMIT 1 OFFSET ?`)
+          .get(Math.floor(Math.random() * totalEmoji)) as {
+          id: string;
+          category: string;
+          emoji_prompt: string;
+          answer: string;
+          aliases_json: string;
+          hint: string;
+        } | undefined)
+      : undefined;
+    const fallbackPick = TEBAK_EMOJI_BANK[Math.floor(Math.random() * TEBAK_EMOJI_BANK.length)];
+    const emojis = pickedDb?.emoji_prompt ?? fallbackPick.emojis;
+    const answer = pickedDb?.answer ?? fallbackPick.answer;
+    const clue = pickedDb?.hint ?? fallbackPick.clue;
+    const emojiCategory = pickedDb?.category ?? 'Umum';
+    const aliases = pickedDb ? (JSON.parse(pickedDb.aliases_json || '[]') as string[]) : [];
+    const maxWrong = getMaxQuizWrongAttempts();
+
     state = {
-      emojis: pick.emojis,
-      clue: pick.clue,
-      answer: pick.answer,
-      prompt: `Tebak maksud emoji ini: ${pick.emojis}`,
+      questionId: pickedDb?.id ?? 'fallback',
+      emojiCategory,
+      emojis,
+      clue,
+      answer,
+      aliases,
+      wrongAttempts: 0,
+      maxWrongAttempts: maxWrong,
+      prompt: `Kategori: *${emojiCategory}*\nTebak maksud emoji ini: ${emojis}\n(Maks ${maxWrong} jawaban salah)`,
     };
-    promptText = pick.emojis;
+    promptText = `${emojis} [${emojiCategory}]`;
   } else if (params.gameId === 'truthordare') {
     const isTruth = Math.random() > 0.5;
     const list = isTruth ? TRUTH_OR_DARE_SAFE.truth : TRUTH_OR_DARE_SAFE.dare;
@@ -308,6 +370,35 @@ export function startGameSession(params: StartGameParams): GameStartResponse {
     };
     promptText = picked;
     initialStatus = 'completed';
+  } else if (params.gameId === 'undercover') {
+    initialStatus = 'waiting';
+    const botLang = normalizeBotLang(params.lang);
+    state = {
+      phase: 'lobby',
+      round: 0,
+      lang: botLang,
+      withMrWhite: Boolean(params.withMrWhite),
+      eliminated: [] as string[],
+      clues: {} as Record<string, string>,
+      votes: {} as Record<string, string>,
+      prompt: `Lobby *Undercover* dibuka (Bahasa: ${botLang.toUpperCase()} | Mr. White: ${params.withMrWhite ? 'ON' : 'Otomatis 4+ pemain'}).\nKetik "gabung" untuk ikut (min 3 pemain) atau host ketik "mulai"!`,
+    };
+    promptText = 'Lobby Undercover dibuka';
+  } else if (params.gameId === 'uno') {
+    initialStatus = 'waiting';
+    state = {
+      phase: 'lobby',
+      currentTurnIndex: 0,
+      direction: 1,
+      topCard: 'R-5',
+      activeColor: 'merah',
+      pendingWildColorFor: null,
+      hands: {} as Record<string, string[]>,
+      deck: [] as string[],
+      turnDeadlineMs: 0,
+      prompt: `Lobby *UNO Card Arena* dibuka! Ketik "gabung" untuk ikut bermain (2-8 pemain) atau host ketik "mulai".\nGunakan *.uno stop* untuk menghentikan permainan.`,
+    };
+    promptText = 'Lobby UNO dibuka';
   } else if (
     params.gameId === 'werewolf' ||
     params.gameId === 'mafia' ||
@@ -317,16 +408,19 @@ export function startGameSession(params: StartGameParams): GameStartResponse {
     params.gameId === 'mafia48'
   ) {
     initialStatus = 'waiting';
+    const isWw2 = Boolean(params.isWw2);
     state = {
       phase: 'lobby',
       round: 0,
       rolesAssigned: false,
-      theme: domain === '48group' ? '48Group Theater Edition' : 'Classic Edition',
+      isWw2,
+      theme: domain === '48group' ? '48Group Theater Edition' : isWw2 ? 'Werewolf2 Extended Edition' : 'Classic Edition',
       votes: {},
+      nightActions: {},
       eliminated: [],
-      prompt: `Lobby ${gameName} dibuka! Ketik "gabung" untuk ikut bermain (min ${gameDef?.min_players ?? 4} pemain) atau host ketik "mulai" dengan bot pengisi.`,
+      prompt: `Lobby ${isWw2 ? 'Werewolf2 (#ww2)' : gameName} dibuka! Ketik "gabung" untuk ikut bermain (min ${gameDef?.min_players ?? 4} pemain) atau host ketik "mulai".`,
     };
-    promptText = `Lobby ${gameName} dibuka`;
+    promptText = `Lobby ${isWw2 ? 'Werewolf2' : gameName} dibuka`;
   } else {
     // 48Group Verified Quizzes & Challenges
     const categoryMap: Record<string, string | null> = {
@@ -425,6 +519,8 @@ export function startGameSession(params: StartGameParams): GameStartResponse {
       explanation: selected.explanation,
       hints: [selected.hint_1, selected.hint_2],
       hintsUsed: 0,
+      wrongAttempts: 0,
+      maxWrongAttempts: getMaxQuizWrongAttempts(),
       difficulty: selected.difficulty || difficulty,
       difficultyLevel: selected.difficulty_level ?? params.difficultyLevel ?? null,
       eraId: selected.era_id ?? params.eraId ?? null,
@@ -527,6 +623,10 @@ export function startGameSession(params: StartGameParams): GameStartResponse {
     );
   } else if (initialStatus === 'active') {
     announcementLines.push('', 'Balas langsung dengan jawabanmu, ketik .hint untuk petunjuk, atau .nyerah untuk mengakhiri sesi.');
+  }
+
+  if (state.isWw2) {
+    announcementLines.push('', `_${botText(params.lang).botFooter}_`);
   }
 
   addAuditLog(params.hostPhone, 'game.session.start', sessionId, {
@@ -692,8 +792,22 @@ export function submitGameAction(params: {
     };
   }
 
-  // Multiplayer Social Deduction Lobby (Werewolf / Mafia / Spyfall / Impostor / 48Group editions)
+  // Multiplayer Lobbies (Undercover, UNO, Werewolf / WW2, Mafia, Spyfall, Impostor)
   if (session.status === 'waiting') {
+    if (session.game_id === 'undercover' && (normalized === 'mrwhite on' || normalized === 'mrwhite off')) {
+      state.withMrWhite = normalized === 'mrwhite on';
+      db.prepare('UPDATE game_sessions SET state_json = ? WHERE id = ?').run(JSON.stringify(state), session.id);
+      return {
+        ok: true,
+        sessionId: session.id,
+        answerStatus: 'turn_ok',
+        scoreAwarded: 0,
+        announcement: `Mode Mr. White sekarang ${state.withMrWhite ? 'AKTIF' : 'NONAKTIF'}.`,
+        sessionStatus: 'waiting',
+        state: sanitizeStateForClient(state),
+      };
+    }
+
     if (params.actionType === 'join' || normalized === 'gabung' || normalized === 'join') {
       ensurePlayer();
       db.prepare('UPDATE game_sessions SET players_json = ? WHERE id = ?').run(JSON.stringify(players), session.id);
@@ -710,7 +824,128 @@ export function submitGameAction(params: {
     }
 
     if (params.actionType === 'start_lobby' || normalized === 'mulai' || normalized === 'start') {
-      // Fill AI companions if solo/testing so lobby is always completable
+      if (session.game_id === 'undercover') {
+        while (players.length < 3) {
+          const idx = players.length + 1;
+          players.push({ phone: `bot-npc-${idx}`, name: `Pemain NPC ${idx}`, score: 0 });
+        }
+        const pair = pickUndercoverWordPair(String(state.lang || 'id'));
+        const useMrWhite = Boolean(state.withMrWhite) || players.length >= 4;
+        const rolePool: Array<'Undercover' | 'Mr. White' | 'Civilian'> = ['Undercover'];
+        if (useMrWhite && players.length >= 4) rolePool.push('Mr. White');
+        while (rolePool.length < players.length) rolePool.push('Civilian');
+        const shuffledRoles = [...rolePool].sort(() => Math.random() - 0.5);
+
+        const roleMap: Record<string, string> = {};
+        const wordMap: Record<string, string> = {};
+        const privateDeliveries: PrivateDeliveryItem[] = [];
+        players.forEach((p, idx) => {
+          const r = shuffledRoles[idx];
+          roleMap[p.phone] = r;
+          const secretWord =
+            r === 'Civilian' ? pair.civilianWord : r === 'Undercover' ? pair.undercoverWord : '(MR. WHITE — tidak ada kata)';
+          wordMap[p.phone] = secretWord;
+          if (!p.phone.startsWith('bot-npc-')) {
+            privateDeliveries.push({
+              toPhone: p.phone,
+              delayMs: computeStaggeredDelayMs(privateDeliveries.length),
+              text:
+                r === 'Mr. White'
+                  ? `🕵️ [Undercover ${session.id}]\nPeran kamu: *Mr. White*!\nKamu tidak mendapat kata—dengarkan clue pemain lain dan tebak kata Civilian kalau tertangkap.`
+                  : `🕵️ [Undercover ${session.id}]\nKategori: *${pair.category}*\nKata rahasia kamu: *${secretWord}*\n(Jangan bocorkan kata aslimu di grup! Berikan clue singkat saat giliranmu.)`,
+            });
+          }
+        });
+
+        state.phase = 'clues';
+        state.round = 1;
+        state.category = pair.category;
+        state.civilianWord = pair.civilianWord;
+        state.undercoverWord = pair.undercoverWord;
+        state.roleMap = roleMap;
+        state.wordMap = wordMap;
+        state.eliminated = [];
+        state.clues = {};
+        state.votes = {};
+        state.turnOrder = players.map((p) => p.phone);
+        state.prompt = `Undercover dimulai (${players.length} pemain, kategori ${pair.category})!\nKata rahasia sudah dijadwalkan ke Private Chat masing-masing pemain.\nFase Clue #1: Kirim 1 clue kata singkat untuk kata milikmu!`;
+
+        db.prepare(`UPDATE game_sessions SET status = 'active', state_json = ?, players_json = ? WHERE id = ?`).run(
+          JSON.stringify(state),
+          JSON.stringify(players),
+          session.id,
+        );
+        logActivity(session, params.playerPhone, params.playerName, 'Start Undercover', trimmed, 'turn_ok', 10, 'active');
+        return {
+          ok: true,
+          sessionId: session.id,
+          answerStatus: 'turn_ok',
+          scoreAwarded: 10,
+          announcement: String(state.prompt),
+          sessionStatus: 'active',
+          state: sanitizeStateForClient(state),
+          privateDeliveries,
+        };
+      }
+
+      if (session.game_id === 'uno') {
+        if (players.length < 2) {
+          players.push({ phone: 'bot-npc-uno', name: 'Freya UNO Bot', score: 0 });
+        }
+        const deck = createShuffledUnoDeck();
+        const hands: Record<string, string[]> = {};
+        const privateDeliveries: PrivateDeliveryItem[] = [];
+        for (const pl of players) {
+          hands[pl.phone] = deck.splice(0, 7);
+          if (!pl.phone.startsWith('bot-npc-')) {
+            const readable = hands[pl.phone]
+              .map((c, idx) => `${idx + 1}. ${c} (${buildUnoCardMetadata(c).label})`)
+              .join('\n');
+            privateDeliveries.push({
+              toPhone: pl.phone,
+              delayMs: computeStaggeredDelayMs(privateDeliveries.length),
+              text: `🃏 [UNO ${session.id}] Kartu awal kamu (7 kartu):\n${readable}\n\nMainkan di grup dengan kirim kode kartu (contoh: ${hands[pl.phone][0]}) atau "draw" untuk ambil kartu.`,
+            });
+          }
+        }
+        let firstCard = deck.shift() || 'R-5';
+        while (firstCard.startsWith('WILD')) {
+          deck.push(firstCard);
+          firstCard = deck.shift() || 'R-5';
+        }
+        const firstMeta = buildUnoCardMetadata(firstCard);
+        const turnDeadlineMs = Date.now() + 60_000;
+
+        state.phase = 'playing';
+        state.hands = hands;
+        state.deck = deck;
+        state.topCard = firstCard;
+        state.activeColor = firstMeta.color === 'wild' ? 'merah' : firstMeta.color;
+        state.currentTurnIndex = 0;
+        state.direction = 1;
+        state.pendingWildColorFor = null;
+        state.turnDeadlineMs = turnDeadlineMs;
+        state.prompt = `🃏 UNO dimulai dengan ${players.length} pemain! Kartu awal di meja: *${firstMeta.label}* (${firstCard}).\nGiliran pertama: *${players[0].name}* (batas 60 detik, tidak lanjut otomatis jika timeout).`;
+
+        db.prepare(`UPDATE game_sessions SET status = 'active', state_json = ?, players_json = ? WHERE id = ?`).run(
+          JSON.stringify(state),
+          JSON.stringify(players),
+          session.id,
+        );
+        logActivity(session, params.playerPhone, params.playerName, 'Start UNO', trimmed, 'turn_ok', 10, 'active');
+        return {
+          ok: true,
+          sessionId: session.id,
+          answerStatus: 'turn_ok',
+          scoreAwarded: 10,
+          announcement: String(state.prompt),
+          sessionStatus: 'active',
+          state: sanitizeStateForClient(state),
+          privateDeliveries,
+        };
+      }
+
+      // Werewolf / WW2 / Mafia / Spyfall / Impostor
       while (players.length < 4) {
         const idx = players.length + 1;
         players.push({ phone: `bot-npc-${idx}`, name: `Pemain NPC ${idx}`, score: 0 });
@@ -718,13 +953,29 @@ export function submitGameAction(params: {
       const roles =
         session.domain === '48group'
           ? ['Shadow Saboteur', 'Center Theater', 'Senbatsu', 'Kenkyuusei']
+          : state.isWw2 && players.length >= 4
+          ? ['Werewolf', 'Seer', 'Guardian', 'Villager']
           : ['Werewolf', 'Seer', 'Villager', 'Villager'];
       const shuffledRoles = [...roles].sort(() => Math.random() - 0.5);
+      const roleMap = Object.fromEntries(players.map((p, i) => [p.phone, shuffledRoles[i % shuffledRoles.length]]));
+      const privateDeliveries: PrivateDeliveryItem[] = [];
+      players.forEach((p) => {
+        if (!p.phone.startsWith('bot-npc-')) {
+          privateDeliveries.push({
+            toPhone: p.phone,
+            delayMs: computeStaggeredDelayMs(privateDeliveries.length),
+            text: `🐺 [${state.isWw2 ? 'Werewolf2 (#ww2)' : session.game_name} — ${session.id}]\nPeran rahasia kamu: *${roleMap[p.phone]}*!\nKirim vote atau aksi malam kamu di grup/room tanpa membocorkan peran secara langsung.\n_${botText().botFooter}_`,
+          });
+        }
+      });
+
       state.phase = 'night';
       state.round = 1;
       state.rolesAssigned = true;
-      state.roleMap = Object.fromEntries(players.map((p, i) => [p.phone, shuffledRoles[i % shuffledRoles.length]]));
-      state.prompt = `Fase Malam Hari ke-1 dimulai (${players.length} peserta). Ketik nama atau nomor pemain yang ingin Anda vote eliminasi di fase siang!`;
+      state.roleMap = roleMap;
+      state.votes = {};
+      state.nightActions = {};
+      state.prompt = `Fase Malam Hari ke-1 dimulai (${players.length} peserta). Peran rahasia dikirim via Private Chat (jeda aman 2-5 detik).\nKetik nama pemain untuk vote eliminasi!${state.isWw2 ? `\n\n_${botText().botFooter}_` : ''}`;
       db.prepare(`UPDATE game_sessions SET status = 'active', state_json = ?, players_json = ? WHERE id = ?`).run(
         JSON.stringify(state),
         JSON.stringify(players),
@@ -736,9 +987,10 @@ export function submitGameAction(params: {
         sessionId: session.id,
         answerStatus: 'turn_ok',
         scoreAwarded: 10,
-        announcement: `Permainan ${session.game_name} dimulai dengan ${players.length} pemain! Fase Malam #1 aktif.`,
+        announcement: `Permainan ${state.isWw2 ? 'Werewolf2 (#ww2)' : session.game_name} dimulai dengan ${players.length} pemain! Fase Malam #1 aktif.${state.isWw2 ? `\n_${botText().botFooter}_` : ''}`,
         sessionStatus: 'active',
         state: sanitizeStateForClient(state),
+        privateDeliveries,
       };
     }
 
@@ -753,52 +1005,543 @@ export function submitGameAction(params: {
     };
   }
 
-  // Active social deduction voting round
-  if (
-    ['werewolf', 'mafia', 'spyfall', 'impostor', 'werewolf48', 'mafia48'].includes(session.game_id) &&
-    session.status === 'active'
-  ) {
+  // Active UNDERCOVER gameplay
+  if (session.game_id === 'undercover' && session.status === 'active') {
+    const eliminated = (state.eliminated as string[]) || [];
+    const roleMap = (state.roleMap || {}) as Record<string, string>;
+    const clues = (state.clues || {}) as Record<string, string>;
+    const votes = (state.votes || {}) as Record<string, string>;
     const p = ensurePlayer();
-    const roleMap = (state.roleMap ?? {}) as Record<string, string>;
-    const suspect = players.find(
-      (pl) => pl.name.toLowerCase().includes(normalized) || normalized === 'vote',
-    ) ?? players.find((pl) => pl.phone !== params.playerPhone);
+    const alivePlayers = players.filter((pl) => !eliminated.includes(pl.phone));
 
-    if (!suspect) {
+    if (['keluar', 'quit'].includes(normalized)) {
+      if (!eliminated.includes(params.playerPhone)) eliminated.push(params.playerPhone);
+      state.eliminated = eliminated;
+      db.prepare(`UPDATE game_sessions SET state_json = ? WHERE id = ?`).run(JSON.stringify(state), session.id);
       return {
-        ok: false,
+        ok: true,
         sessionId: session.id,
-        answerStatus: 'wrong',
+        answerStatus: 'turn_ok',
         scoreAwarded: 0,
-        announcement: 'Target vote tidak ditemukan.',
+        announcement: `${params.playerName} keluar dari sesi Undercover (${session.id}).`,
         sessionStatus: 'active',
         state: sanitizeStateForClient(state),
       };
     }
 
-    const suspectRole = roleMap[suspect.phone] || 'Villager';
-    const isWolf = suspectRole.includes('Werewolf') || suspectRole.includes('Shadow') || suspectRole.includes('Mafia');
-    const scoreAwarded = isWolf ? 150 : 40;
-    p.score += scoreAwarded;
-    applyUserBalanceAndExp(params.playerPhone, params.playerName, scoreAwarded, 30, `${session.game_name} (${session.id})`, session.id);
-    recordLeaderboardScore(params.playerPhone, params.playerName, session.domain, session.game_id, scoreAwarded, isWolf);
+    if (state.phase === 'mrwhite_guess') {
+      const targetMrWhite = String(state.mrWhiteCandidate || '');
+      if (params.playerPhone !== targetMrWhite && !targetMrWhite.startsWith('bot-npc-')) {
+        return {
+          ok: false,
+          sessionId: session.id,
+          answerStatus: 'ignored',
+          scoreAwarded: 0,
+          announcement: 'Lagi menunggu Mr. White menebak kata Civilian.',
+          sessionStatus: 'active',
+          state: sanitizeStateForClient(state),
+        };
+      }
+      const guessWord = trimmed.replace(/^tebak\s+/i, '').trim().toLowerCase();
+      const civilWord = String(state.civilianWord || '').toLowerCase();
+      const mrWhiteWins = guessWord === civilWord;
+      const winner = mrWhiteWins ? 'Mr. White' : 'Civilian';
+      const pts = mrWhiteWins ? 160 : 120;
+      applyUserBalanceAndExp(params.playerPhone, params.playerName, pts, 30, `Undercover (${session.id})`, session.id);
+      db.prepare(`UPDATE game_sessions SET status = 'completed', ended_at = datetime('now'), state_json = ? WHERE id = ?`).run(
+        JSON.stringify({ ...state, winner }),
+        session.id,
+      );
+      return {
+        ok: true,
+        sessionId: session.id,
+        answerStatus: mrWhiteWins ? 'correct' : 'wrong',
+        scoreAwarded: pts,
+        announcement: mrWhiteWins
+          ? `🎭 TEBAKAN BENAR! Mr. White menebak "${state.civilianWord}" dan MENANG! (+${pts} Balance)`
+          : `🕵️ Tebakan Mr. White keliru ("${guessWord}"). Kata Civilian adalah "${state.civilianWord}". Tim Civilian MENANG!`,
+        sessionStatus: 'completed',
+        state: sanitizeStateForClient({ ...state, winner }),
+      };
+    }
 
-    db.prepare(`UPDATE game_sessions SET status = 'completed', ended_at = datetime('now'), state_json = ?, players_json = ? WHERE id = ?`).run(
-      JSON.stringify({ ...state, eliminated: [suspect.name], winner: isWolf ? 'Tim Desa / Theater' : 'Tim Shadow' }),
-      JSON.stringify(players),
-      session.id,
-    );
-    logActivity(session, params.playerPhone, params.playerName, 'Voting Eliminasi', trimmed, isWolf ? 'correct' : 'wrong', scoreAwarded, 'completed');
+    if (state.phase === 'clues') {
+      const cleanClue = trimmed.replace(/^clue\s+/i, '').trim();
+      if (normalized !== 'voting' && normalized !== 'next') {
+        clues[params.playerPhone] = cleanClue;
+        // Fill NPC clues automatically
+        for (const npc of alivePlayers) {
+          if (npc.phone.startsWith('bot-npc-') && !clues[npc.phone]) {
+            clues[npc.phone] = roleMap[npc.phone] === 'Mr. White' ? 'lumayan' : 'sering dipakai';
+          }
+        }
+        state.clues = clues;
+      }
+      const allGaveClues = alivePlayers.every((pl) => Boolean(clues[pl.phone])) || normalized === 'voting' || normalized === 'next';
+      if (allGaveClues) {
+        state.phase = 'voting';
+        const clueSummary = alivePlayers.map((pl) => `• ${pl.name}: "${clues[pl.phone] || '-'}"`).join('\n');
+        state.prompt = `Semua clue terkumpul:\n${clueSummary}\n\nSekarang ketik "vote <nama>" untuk mengeliminasi pemain yang dicurigai!`;
+        db.prepare(`UPDATE game_sessions SET state_json = ? WHERE id = ?`).run(JSON.stringify(state), session.id);
+        return {
+          ok: true,
+          sessionId: session.id,
+          answerStatus: 'turn_ok',
+          scoreAwarded: 0,
+          announcement: String(state.prompt),
+          sessionStatus: 'active',
+          state: sanitizeStateForClient(state),
+        };
+      }
+      db.prepare(`UPDATE game_sessions SET state_json = ? WHERE id = ?`).run(JSON.stringify(state), session.id);
+      return {
+        ok: true,
+        sessionId: session.id,
+        answerStatus: 'turn_ok',
+        scoreAwarded: 0,
+        announcement: `Clue dari ${params.playerName} ("${cleanClue}") dicatat.`,
+        sessionStatus: 'active',
+        state: sanitizeStateForClient(state),
+      };
+    }
 
+    // Voting phase in Undercover
+    const targetQuery = trimmed.replace(/^vote\s+/i, '').trim().toLowerCase();
+    const suspect =
+      alivePlayers.find((pl) => pl.name.toLowerCase().includes(targetQuery) || pl.phone.includes(targetQuery)) ??
+      alivePlayers.find((pl) => pl.phone !== params.playerPhone);
+
+    if (!suspect) {
+      return {
+        ok: false,
+        sessionId: session.id,
+        answerStatus: 'ignored',
+        scoreAwarded: 0,
+        announcement: 'Target vote tidak ditemukan di daftar pemain aktif.',
+        sessionStatus: 'active',
+        state: sanitizeStateForClient(state),
+      };
+    }
+
+    votes[params.playerPhone] = suspect.phone;
+    eliminated.push(suspect.phone);
+    state.votes = votes;
+    state.eliminated = eliminated;
+    const suspectRole = roleMap[suspect.phone] || 'Civilian';
+
+    if (suspectRole === 'Mr. White' && !suspect.phone.startsWith('bot-npc-')) {
+      state.phase = 'mrwhite_guess';
+      state.mrWhiteCandidate = suspect.phone;
+      db.prepare(`UPDATE game_sessions SET state_json = ? WHERE id = ?`).run(JSON.stringify(state), session.id);
+      return {
+        ok: true,
+        sessionId: session.id,
+        answerStatus: 'turn_ok',
+        scoreAwarded: 0,
+        announcement: `🎭 *${suspect.name}* ternyata *Mr. White*! Sebelum kalah, ${suspect.name} punya 1 kesempatan ketik kata rahasia Civilian!`,
+        sessionStatus: 'active',
+        state: sanitizeStateForClient(state),
+      };
+    }
+
+    const remaining = players.filter((pl) => !eliminated.includes(pl.phone));
+    const remainingUndercovers = remaining.filter((pl) => roleMap[pl.phone] === 'Undercover');
+    const remainingCivilians = remaining.filter((pl) => roleMap[pl.phone] === 'Civilian');
+
+    if (remainingUndercovers.length === 0 || remainingUndercovers.length >= remainingCivilians.length) {
+      const winner = remainingUndercovers.length === 0 ? 'Civilian' : 'Undercover';
+      const pts = winner === 'Civilian' ? 140 : 160;
+      p.score += pts;
+      applyUserBalanceAndExp(params.playerPhone, params.playerName, pts, 30, `Undercover (${session.id})`, session.id);
+      recordLeaderboardScore(params.playerPhone, params.playerName, session.domain, session.game_id, pts, true);
+      db.prepare(`UPDATE game_sessions SET status = 'completed', ended_at = datetime('now'), state_json = ?, players_json = ? WHERE id = ?`).run(
+        JSON.stringify({ ...state, winner }),
+        JSON.stringify(players),
+        session.id,
+      );
+      logActivity(session, params.playerPhone, params.playerName, 'Undercover Elimination', trimmed, 'correct', pts, 'completed');
+      return {
+        ok: true,
+        sessionId: session.id,
+        answerStatus: 'correct',
+        scoreAwarded: pts,
+        announcement: `🕵️ *${suspect.name}* tereliminasi (${suspectRole})!\nPermainan selesai — Pemenang: *Tim ${winner}*!\nKata Civilian: "${state.civilianWord}" | Undercover: "${state.undercoverWord}". (+${pts} Balance)`,
+        sessionStatus: 'completed',
+        state: sanitizeStateForClient({ ...state, winner }),
+      };
+    }
+
+    state.phase = 'clues';
+    state.clues = {};
+    state.round = Number(state.round ?? 1) + 1;
+    db.prepare(`UPDATE game_sessions SET state_json = ? WHERE id = ?`).run(JSON.stringify(state), session.id);
     return {
       ok: true,
       sessionId: session.id,
-      answerStatus: isWolf ? 'correct' : 'wrong',
-      scoreAwarded,
-      announcement: `Hasil Voting ${session.game_name} (${session.id}):\nTereliminasi: ${suspect.name} (${suspectRole}).\nPemenang: ${isWolf ? 'Tim Desa / Theater' : 'Tim Saboteur'}! Skor: +${scoreAwarded}`,
-      sessionStatus: 'completed',
-      state: sanitizeStateForClient({ ...state, eliminated: [suspect.name], winner: isWolf ? 'Tim Desa / Theater' : 'Tim Saboteur' }),
+      answerStatus: 'turn_ok',
+      scoreAwarded: 0,
+      announcement: `${suspect.name} tereliminasi (${suspectRole}). Masih ada penyusup! Masuk ke Ronde Clue #${state.round}.`,
+      sessionStatus: 'active',
+      state: sanitizeStateForClient(state),
     };
+  }
+
+  // Active UNO gameplay
+  if (session.game_id === 'uno' && session.status === 'active') {
+    const hands = (state.hands || {}) as Record<string, string[]>;
+    const deck = (state.deck || []) as string[];
+    const currentIdx = Number(state.currentTurnIndex ?? 0);
+    const currentPlayer = players[currentIdx];
+
+    if (!currentPlayer) {
+      return { ok: false, sessionId: session.id, answerStatus: 'ignored', scoreAwarded: 0, announcement: 'Pemain UNO tidak valid.', sessionStatus: 'active', state: sanitizeStateForClient(state) };
+    }
+
+    if (params.playerPhone !== currentPlayer.phone && !currentPlayer.phone.startsWith('bot-npc-')) {
+      return {
+        ok: false,
+        sessionId: session.id,
+        answerStatus: 'ignored',
+        scoreAwarded: 0,
+        announcement: `Belum giliranmu ya! Sekarang giliran *${currentPlayer.name}*.`,
+        sessionStatus: 'active',
+        state: sanitizeStateForClient(state),
+      };
+    }
+
+    // Handle pending Wild color choice cleanly!
+    if (state.pendingWildColorFor === params.playerPhone) {
+      const pickedColor = normalizeUnoColor(trimmed);
+      if (!pickedColor) {
+        return {
+          ok: false,
+          sessionId: session.id,
+          answerStatus: 'ignored',
+          scoreAwarded: 0,
+          announcement: 'Pilih warna Wild yang valid: *merah*, *biru*, *kuning*, atau *hijau*.',
+          sessionStatus: 'active',
+          state: sanitizeStateForClient(state),
+        };
+      }
+      state.activeColor = pickedColor;
+      state.pendingWildColorFor = null;
+      const step = state.pendingWildPlus4 ? 2 : 1;
+      const dir = Number(state.direction ?? 1);
+      const nextIdx = ((currentIdx + step * dir) % players.length + players.length) % players.length;
+      if (state.pendingWildPlus4) {
+        const victimIdx = ((currentIdx + dir) % players.length + players.length) % players.length;
+        const victim = players[victimIdx];
+        hands[victim.phone] = hands[victim.phone] || [];
+        hands[victim.phone].push(...deck.splice(0, 4));
+      }
+      state.pendingWildPlus4 = false;
+      state.currentTurnIndex = nextIdx;
+      state.turnDeadlineMs = Date.now() + 60_000;
+      db.prepare(`UPDATE game_sessions SET state_json = ? WHERE id = ?`).run(JSON.stringify(state), session.id);
+      return {
+        ok: true,
+        sessionId: session.id,
+        answerStatus: 'turn_ok',
+        scoreAwarded: 0,
+        announcement: `🎨 Warna Wild dipilih: *${pickedColor.toUpperCase()}*!\nGiliran berikutnya: *${players[nextIdx].name}* (60 detik).`,
+        sessionStatus: 'active',
+        state: sanitizeStateForClient(state),
+      };
+    }
+
+    const myHand = hands[currentPlayer.phone] || [];
+
+    if (normalized === 'draw' || normalized === 'ambil') {
+      const drawn = deck.shift() || 'R-1';
+      myHand.push(drawn);
+      hands[currentPlayer.phone] = myHand;
+      const dir = Number(state.direction ?? 1);
+      const nextIdx = ((currentIdx + dir) % players.length + players.length) % players.length;
+      state.currentTurnIndex = nextIdx;
+      state.turnDeadlineMs = Date.now() + 60_000;
+      db.prepare(`UPDATE game_sessions SET state_json = ? WHERE id = ?`).run(JSON.stringify(state), session.id);
+      return {
+        ok: true,
+        sessionId: session.id,
+        answerStatus: 'turn_ok',
+        scoreAwarded: 0,
+        announcement: `${currentPlayer.name} mengambil 1 kartu (${myHand.length} kartu di tangan). Giliran: *${players[nextIdx].name}*.`,
+        sessionStatus: 'active',
+        state: sanitizeStateForClient(state),
+        privateDeliveries: !currentPlayer.phone.startsWith('bot-npc-')
+          ? [{ toPhone: currentPlayer.phone, delayMs: computeStaggeredDelayMs(0), text: `🃏 Kartu baru UNO kamu: *${drawn}* (${buildUnoCardMetadata(drawn).label}). Total kartu: ${myHand.join(', ')}` }]
+          : undefined,
+      };
+    }
+
+    // Parse card + optional color arg (e.g. "WILD biru" or sticker ID)
+    const parts = trimmed.split(/\s+/);
+    const cardMeta = resolveStickerToUnoCard(parts[0]);
+    if (!cardMeta) {
+      return {
+        ok: false,
+        sessionId: session.id,
+        answerStatus: 'ignored',
+        scoreAwarded: 0,
+        announcement: `Format kartu UNO nggak dikenali. Ketik kode kartu (misal: R-5, WILD merah) atau "draw".`,
+        sessionStatus: 'active',
+        state: sanitizeStateForClient(state),
+      };
+    }
+
+    const handIdx = myHand.findIndex((c) => c.toUpperCase() === cardMeta.code);
+    if (handIdx < 0) {
+      return {
+        ok: false,
+        sessionId: session.id,
+        answerStatus: 'ignored',
+        scoreAwarded: 0,
+        announcement: `Kartu *${cardMeta.code}* nggak ada di tanganmu.`,
+        sessionStatus: 'active',
+        state: sanitizeStateForClient(state),
+      };
+    }
+
+    const topCard = String(state.topCard || 'R-5');
+    const activeColor = (state.activeColor || 'merah') as UnoColor;
+    if (!canPlayUnoCard(cardMeta.code, topCard, activeColor)) {
+      return {
+        ok: false,
+        sessionId: session.id,
+        answerStatus: 'ignored',
+        scoreAwarded: 0,
+        announcement: `Kartu *${cardMeta.label}* belum cocok sama kartu meja (${buildUnoCardMetadata(topCard).label} · warna aktif: ${activeColor.toUpperCase()}).`,
+        sessionStatus: 'active',
+        state: sanitizeStateForClient(state),
+      };
+    }
+
+    // Play the card!
+    myHand.splice(handIdx, 1);
+    hands[currentPlayer.phone] = myHand;
+    state.topCard = cardMeta.code;
+
+    // Check WIN
+    if (myHand.length === 0) {
+      const pts = 120;
+      currentPlayer.score += pts;
+      applyUserBalanceAndExp(currentPlayer.phone, currentPlayer.name, pts, 30, `Menang UNO (${session.id})`, session.id);
+      recordLeaderboardScore(currentPlayer.phone, currentPlayer.name, session.domain, session.game_id, pts, true);
+      db.prepare(`UPDATE game_sessions SET status = 'completed', ended_at = datetime('now'), state_json = ?, players_json = ? WHERE id = ?`).run(
+        JSON.stringify({ ...state, winner: currentPlayer.name }),
+        JSON.stringify(players),
+        session.id,
+      );
+      logActivity(session, currentPlayer.phone, currentPlayer.name, 'UNO Win', trimmed, 'correct', pts, 'completed');
+      return {
+        ok: true,
+        sessionId: session.id,
+        answerStatus: 'correct',
+        scoreAwarded: pts,
+        announcement: `🎉 UNO!! *${currentPlayer.name}* menghabiskan semua kartu dan MENANG! (+${pts} Balance)`,
+        sessionStatus: 'completed',
+        state: sanitizeStateForClient({ ...state, winner: currentPlayer.name }),
+      };
+    }
+
+    if (cardMeta.color === 'wild') {
+      const inlineColor = parts[1] ? normalizeUnoColor(parts[1]) : null;
+      if (!inlineColor) {
+        state.pendingWildColorFor = currentPlayer.phone;
+        state.pendingWildPlus4 = cardMeta.code === 'WILD+4';
+        state.turnDeadlineMs = Date.now() + 60_000;
+        db.prepare(`UPDATE game_sessions SET state_json = ? WHERE id = ?`).run(JSON.stringify(state), session.id);
+        return {
+          ok: true,
+          sessionId: session.id,
+          answerStatus: 'turn_ok',
+          scoreAwarded: 0,
+          announcement: `${currentPlayer.name} memainkan *${cardMeta.label}*!\nPilih warna baru sekarang: *merah*, *biru*, *kuning*, atau *hijau*.`,
+          sessionStatus: 'active',
+          state: sanitizeStateForClient(state),
+        };
+      }
+      state.activeColor = inlineColor;
+    } else {
+      state.activeColor = cardMeta.color;
+    }
+
+    let dir = Number(state.direction ?? 1);
+    let step = 1;
+    if (cardMeta.value === 'REVERSE') {
+      dir = players.length === 2 ? dir : -dir;
+      state.direction = dir;
+      if (players.length === 2) step = 2;
+    } else if (cardMeta.value === 'SKIP') {
+      step = 2;
+    } else if (cardMeta.value === '+2' || cardMeta.code === 'WILD+4') {
+      const drawAmt = cardMeta.code === 'WILD+4' ? 4 : 2;
+      const victimIdx = ((currentIdx + dir) % players.length + players.length) % players.length;
+      const victim = players[victimIdx];
+      hands[victim.phone] = hands[victim.phone] || [];
+      hands[victim.phone].push(...deck.splice(0, drawAmt));
+      step = 2;
+    }
+
+    const nextIdx = ((currentIdx + step * dir) % players.length + players.length) % players.length;
+    state.currentTurnIndex = nextIdx;
+    state.turnDeadlineMs = Date.now() + 60_000;
+    db.prepare(`UPDATE game_sessions SET state_json = ? WHERE id = ?`).run(JSON.stringify(state), session.id);
+    return {
+      ok: true,
+      sessionId: session.id,
+      answerStatus: 'turn_ok',
+      scoreAwarded: 0,
+      announcement: `🃏 ${currentPlayer.name} mainkan *${cardMeta.label}* (sisa ${myHand.length} kartu). Warna aktif: *${String(state.activeColor).toUpperCase()}*.\nGiliran berikutnya: *${players[nextIdx].name}* (60 detik).`,
+      sessionStatus: 'active',
+      state: sanitizeStateForClient(state),
+    };
+  }
+
+  // Active social deduction voting round (Werewolf / WW2 / Mafia / Spyfall / Impostor / 48Group)
+  if (
+    ['werewolf', 'mafia', 'spyfall', 'impostor', 'werewolf48', 'mafia48'].includes(session.game_id) &&
+    session.status === 'active'
+  ) {
+    const lockKey = `ww-vote-${session.id}-${params.playerPhone}`;
+    if (!acquireActionLock(lockKey, 1500)) {
+      return {
+        ok: false,
+        sessionId: session.id,
+        answerStatus: 'ignored',
+        scoreAwarded: 0,
+        announcement: 'Vote kamu lagi diproses, tunggu sebentar ya.',
+        sessionStatus: 'active',
+        state: sanitizeStateForClient(state),
+      };
+    }
+
+    try {
+      return db.transaction(() => {
+        const fresh = db.prepare('SELECT status, state_json, players_json FROM game_sessions WHERE id = ?').get(session.id) as {
+          status: GameSessionStatus;
+          state_json: string;
+          players_json: string;
+        };
+        if (fresh.status !== 'active') {
+          return {
+            ok: false,
+            sessionId: session.id,
+            answerStatus: 'late' as const,
+            scoreAwarded: 0,
+            announcement: 'Sesi voting sudah selesai.',
+            sessionStatus: fresh.status,
+            state: sanitizeStateForClient(JSON.parse(fresh.state_json)),
+          };
+        }
+
+        const freshState = JSON.parse(fresh.state_json) as Record<string, any>;
+        const freshPlayers = JSON.parse(fresh.players_json) as Array<{ phone: string; name: string; score: number }>;
+        let voter = freshPlayers.find((x) => x.phone === params.playerPhone);
+        if (!voter) {
+          voter = { phone: params.playerPhone, name: params.playerName, score: 0 };
+          freshPlayers.push(voter);
+        }
+
+        const roleMap = (freshState.roleMap ?? {}) as Record<string, string>;
+        const votes = (freshState.votes ?? {}) as Record<string, string>;
+        const suspect =
+          freshPlayers.find((pl) => pl.name.toLowerCase().includes(normalized) || normalized === 'vote') ??
+          freshPlayers.find((pl) => pl.phone !== params.playerPhone);
+
+        if (!suspect) {
+          return {
+            ok: false,
+            sessionId: session.id,
+            answerStatus: 'wrong' as const,
+            scoreAwarded: 0,
+            announcement: 'Target vote tidak ditemukan.',
+            sessionStatus: 'active' as const,
+            state: sanitizeStateForClient(freshState),
+          };
+        }
+
+        votes[params.playerPhone] = suspect.phone;
+        freshState.votes = votes;
+
+        // Real players (non-NPC) needed for atomic vote completion, or immediate resolve if single real player
+        const realPlayers = freshPlayers.filter((pl) => !pl.phone.startsWith('bot-npc-'));
+        const allRealVoted = realPlayers.every((pl) => Boolean(votes[pl.phone]));
+
+        if (!allRealVoted && realPlayers.length > 1) {
+          db.prepare(`UPDATE game_sessions SET state_json = ?, players_json = ? WHERE id = ?`).run(
+            JSON.stringify(freshState),
+            JSON.stringify(freshPlayers),
+            session.id,
+          );
+          return {
+            ok: true,
+            sessionId: session.id,
+            answerStatus: 'turn_ok' as const,
+            scoreAwarded: 0,
+            announcement: `🗳️ Vote dari ${params.playerName} tercatat (${Object.keys(votes).length}/${realPlayers.length}). Menunggu pemain lain.`,
+            sessionStatus: 'active' as const,
+            state: sanitizeStateForClient(freshState),
+          };
+        }
+
+        // Tally votes atomically!
+        const tally = new Map<string, number>();
+        for (const tPhone of Object.values(votes)) {
+          tally.set(tPhone, (tally.get(tPhone) || 0) + 1);
+        }
+        let topTargetPhone = suspect.phone;
+        let topVotes = -1;
+        for (const [tPhone, count] of tally.entries()) {
+          if (count > topVotes) {
+            topVotes = count;
+            topTargetPhone = tPhone;
+          }
+        }
+        const eliminatedPlayer = freshPlayers.find((pl) => pl.phone === topTargetPhone) ?? suspect;
+        const suspectRole = roleMap[eliminatedPlayer.phone] || 'Villager';
+        const isWolf = suspectRole.includes('Werewolf') || suspectRole.includes('Shadow') || suspectRole.includes('Mafia');
+        const scoreAwarded = isWolf ? 150 : 40;
+        voter.score += scoreAwarded;
+
+        const finishUpd = db
+          .prepare(`UPDATE game_sessions SET status = 'completed', ended_at = datetime('now'), state_json = ?, players_json = ? WHERE id = ? AND status = 'active'`)
+          .run(
+            JSON.stringify({ ...freshState, eliminated: [eliminatedPlayer.name], winner: isWolf ? 'Tim Desa / Theater' : 'Tim Shadow' }),
+            JSON.stringify(freshPlayers),
+            session.id,
+          );
+
+        if (finishUpd.changes === 0) {
+          return {
+            ok: false,
+            sessionId: session.id,
+            answerStatus: 'late' as const,
+            scoreAwarded: 0,
+            announcement: 'Voting sudah selesai.',
+            sessionStatus: 'completed' as const,
+            state: sanitizeStateForClient(freshState),
+          };
+        }
+
+        applyUserBalanceAndExp(params.playerPhone, params.playerName, scoreAwarded, 30, `${session.game_name} (${session.id})`, session.id);
+        recordLeaderboardScore(params.playerPhone, params.playerName, session.domain, session.game_id, scoreAwarded, isWolf);
+        logActivity(session, params.playerPhone, params.playerName, 'Voting Eliminasi', trimmed, isWolf ? 'correct' : 'wrong', scoreAwarded, 'completed');
+
+        const footerNote = freshState.isWw2 ? `\n\n_${botText().botFooter}_` : '';
+        return {
+          ok: true,
+          sessionId: session.id,
+          answerStatus: (isWolf ? 'correct' : 'wrong') as 'correct' | 'wrong',
+          scoreAwarded,
+          announcement: `Hasil Voting ${freshState.isWw2 ? 'Werewolf2 (#ww2)' : session.game_name} (${session.id}):\nTereliminasi: ${eliminatedPlayer.name} (${suspectRole}).\nPemenang: ${isWolf ? 'Tim Desa / Theater' : 'Tim Saboteur'}! Skor: +${scoreAwarded}${footerNote}`,
+          sessionStatus: 'completed' as const,
+          state: sanitizeStateForClient({ ...freshState, eliminated: [eliminatedPlayer.name], winner: isWolf ? 'Tim Desa / Theater' : 'Tim Saboteur' }),
+        };
+      })();
+    } finally {
+      releaseActionLock(lockKey);
+    }
   }
 
   // Prevent double-answering once a player already solved single-winner rounds
@@ -815,67 +1558,23 @@ export function submitGameAction(params: {
     };
   }
 
-  // Handle Bom / Tebak Bom
+  // Handle Bom / Tebak Bom (v5 configurable grid, proportional bombs, negative balance allowed, voluntary stop)
   if (session.game_id === 'bom' || session.game_id === 'tebakbom') {
-    const idx = Number.parseInt(trimmed, 10) - 1;
-    if (Number.isNaN(idx) || idx < 0 || idx > 8) {
-      return { ok: false, sessionId: session.id, answerStatus: 'ignored', scoreAwarded: 0, announcement: 'Pilih nomor kotak 1 sampai 9.', sessionStatus: 'active', state: sanitizeStateForClient(state) };
-    }
-    const board = state.board as string[];
-    const opened = state.opened as number[];
-    if (opened.includes(idx)) {
-      return { ok: false, sessionId: session.id, answerStatus: 'ignored', scoreAwarded: 0, announcement: 'Kotak tersebut sudah dibuka. Pilih kotak lain.', sessionStatus: 'active', state: sanitizeStateForClient(state) };
-    }
-    opened.push(idx);
-    if (idx === state.bombIndex) {
-      board[idx] = 'BOOM';
-      db.prepare(`UPDATE game_sessions SET status = 'completed', ended_at = datetime('now'), state_json = ?, players_json = ? WHERE id = ?`).run(
-        JSON.stringify(state),
-        JSON.stringify(players),
-        session.id,
-      );
-      logActivity(session, params.playerPhone, params.playerName, 'Pilih Kotak Bom', trimmed, 'wrong', 0, 'completed');
-      return {
-        ok: true,
-        sessionId: session.id,
-        answerStatus: 'wrong',
-        scoreAwarded: 0,
-        announcement: `BOOM! Kotak ${idx + 1} berisi bom. Permainan ${session.id} berakhir dengan total ${playerObj.score} poin.`,
-        sessionStatus: 'completed',
-        state: sanitizeStateForClient(state),
-      };
-    }
-
-    board[idx] = 'SAFE';
-    const safeOpened = Number(state.safeOpened ?? 0) + 1;
-    state.safeOpened = safeOpened;
-    const pts = 30;
-    playerObj.score += pts;
-    applyUserBalanceAndExp(params.playerPhone, params.playerName, pts, 10, `Tebak Bom kotak aman (${session.id})`, session.id);
-
-    const finished = safeOpened >= 8;
-    const newStatus: GameSessionStatus = finished ? 'completed' : 'active';
-    if (finished) {
-      recordLeaderboardScore(params.playerPhone, params.playerName, session.domain, session.game_id, playerObj.score, true);
-    }
-    db.prepare(`UPDATE game_sessions SET status = ?, ended_at = ?, state_json = ?, players_json = ? WHERE id = ?`).run(
-      newStatus,
-      finished ? new Date().toISOString() : null,
-      JSON.stringify(state),
-      JSON.stringify(players),
-      session.id,
-    );
-    logActivity(session, params.playerPhone, params.playerName, 'Pilih Kotak Bom', trimmed, 'correct', pts, newStatus);
+    const bomRes = processBomTurn({
+      session,
+      state,
+      players,
+      playerPhone: params.playerPhone,
+      playerName: params.playerName,
+      trimmedInput: trimmed,
+      recordScoreFn: recordLeaderboardScore,
+      logFn: (prompt, ans, st, score, sessSt) =>
+        logActivity(session, params.playerPhone, params.playerName, prompt, ans, st, score, sessSt),
+    });
     return {
-      ok: true,
       sessionId: session.id,
-      answerStatus: 'correct',
-      scoreAwarded: pts,
-      announcement: finished
-        ? `Luar biasa! Semua 8 kotak aman berhasil dibuka! Total hadiah virtual: +${playerObj.score} Balance.`
-        : `Kotak ${idx + 1} aman! (+${pts} Balance). Sisa kotak aman: ${8 - safeOpened}.`,
-      sessionStatus: newStatus,
-      state: sanitizeStateForClient(state),
+      ...bomRes,
+      state: sanitizeStateForClient(bomRes.state),
     };
   }
 
@@ -1084,13 +1783,39 @@ export function submitGameAction(params: {
     const found = state.found as string[];
     const matched = answers.find((a) => a.toLowerCase() === normalized);
     if (!matched || found.includes(matched)) {
+      const wrongAttempts = Number(state.wrongAttempts ?? 0) + 1;
+      const maxWrong = Number(state.maxWrongAttempts ?? getMaxQuizWrongAttempts());
+      state.wrongAttempts = wrongAttempts;
+      if (wrongAttempts >= maxWrong) {
+        db.prepare(
+          `UPDATE game_sessions SET status = 'completed', ended_at = datetime('now'), cancel_reason = 'Batas 5 jawaban salah tercapai', state_json = ?, players_json = ? WHERE id = ?`,
+        ).run(JSON.stringify(state), JSON.stringify(players), session.id);
+        logActivity(session, params.playerPhone, params.playerName, String(state.question), trimmed, 'wrong', 0, 'completed');
+        const remaining = answers.filter((a) => !found.includes(a));
+        return {
+          ok: true,
+          sessionId: session.id,
+          answerStatus: 'wrong',
+          scoreAwarded: 0,
+          announcement: `❌ Jawaban "${trimmed}" tidak cocok (${wrongAttempts}/${maxWrong}). Batas salah tercapai!\nJawaban tersisa: ${remaining.length > 0 ? remaining.join(', ') : answers.join(', ')}`,
+          sessionStatus: 'completed',
+          state: sanitizeStateForClient(state),
+        };
+      }
+      db.prepare(`UPDATE game_sessions SET state_json = ?, players_json = ? WHERE id = ?`).run(
+        JSON.stringify(state),
+        JSON.stringify(players),
+        session.id,
+      );
       logActivity(session, params.playerPhone, params.playerName, String(state.question), trimmed, 'wrong', 0, 'active');
       return {
         ok: true,
         sessionId: session.id,
         answerStatus: 'wrong',
         scoreAwarded: 0,
-        announcement: matched ? `"${matched}" sudah ditemukan.` : `Belum ada di daftar survei Family 100.`,
+        announcement: matched
+          ? `"${matched}" sudah ditemukan (${wrongAttempts}/${maxWrong} salah).`
+          : `Belum ada di daftar survei Family 100 (${wrongAttempts}/${maxWrong} salah).`,
         sessionStatus: 'active',
         state: sanitizeStateForClient(state),
       };
@@ -1127,6 +1852,7 @@ export function submitGameAction(params: {
 
   // Standard Q&A / 48Group Verified Quizzes / Tebak Kata / Math / Siapa Aku / Tebak Emoji
   const expectedRaw = String(state.correctAnswer ?? state.answer ?? '');
+  const aliases = Array.isArray(state.aliases) ? (state.aliases as string[]) : [];
   let userAnswerText = trimmed;
   if (Array.isArray(state.options)) {
     const idx = Number.parseInt(trimmed, 10);
@@ -1135,18 +1861,47 @@ export function submitGameAction(params: {
     }
   }
 
-  const isCorrect = userAnswerText.trim().toLowerCase() === expectedRaw.trim().toLowerCase();
+  const normalizeAns = (v: string) => v.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
+  const userNorm = normalizeAns(userAnswerText);
+  const isCorrect =
+    userNorm === normalizeAns(expectedRaw) || aliases.some((a) => normalizeAns(a) === userNorm);
   const difficulty = (state.difficulty as DifficultyLevel) || 'normal';
   const hintsUsed = Number(state.hintsUsed ?? 0);
 
   if (!isCorrect) {
+    const wrongAttempts = Number(state.wrongAttempts ?? 0) + 1;
+    const maxWrong = Number(state.maxWrongAttempts ?? getMaxQuizWrongAttempts());
+    state.wrongAttempts = wrongAttempts;
+
+    if (wrongAttempts >= maxWrong) {
+      db.prepare(
+        `UPDATE game_sessions SET status = 'completed', ended_at = datetime('now'), cancel_reason = 'Batas 5 jawaban salah tercapai', state_json = ?, players_json = ? WHERE id = ?`,
+      ).run(JSON.stringify(state), JSON.stringify(players), session.id);
+      logActivity(session, params.playerPhone, params.playerName, String(state.prompt ?? ''), trimmed, 'wrong', 0, 'completed');
+      const expLine = state.explanation ? `\nPenjelasan: ${state.explanation}` : '';
+      return {
+        ok: true,
+        sessionId: session.id,
+        answerStatus: 'wrong',
+        scoreAwarded: 0,
+        announcement: `❌ Jawaban "${trimmed}" salah (${wrongAttempts}/${maxWrong}). Batas salah habis, soal langsung dihentikan!\nJawaban yang benar: *${expectedRaw}*${expLine}`,
+        sessionStatus: 'completed',
+        state: sanitizeStateForClient(state),
+      };
+    }
+
+    db.prepare(`UPDATE game_sessions SET state_json = ?, players_json = ? WHERE id = ?`).run(
+      JSON.stringify(state),
+      JSON.stringify(players),
+      session.id,
+    );
     logActivity(session, params.playerPhone, params.playerName, String(state.prompt ?? ''), trimmed, 'wrong', 0, 'active');
     return {
       ok: true,
       sessionId: session.id,
       answerStatus: 'wrong',
       scoreAwarded: 0,
-      announcement: `Jawaban "${trimmed}" belum tepat. Coba lagi atau ketik .hint / .nyerah.`,
+      announcement: `Jawaban "${trimmed}" belum tepat (${wrongAttempts}/${maxWrong} salah). Coba lagi atau ketik .hint / .nyerah.`,
       sessionStatus: 'active',
       state: sanitizeStateForClient(state),
     };
@@ -1257,7 +2012,15 @@ function sanitizeStateForClient(state: Record<string, unknown>): Record<string, 
   const clone = { ...state };
   delete clone.correctAnswer;
   delete clone.answer;
+  delete clone.aliases;
   delete clone.target;
   delete clone.bombIndex;
+  delete clone.bombIndexes;
+  delete clone.civilianWord;
+  delete clone.undercoverWord;
+  delete clone.wordMap;
+  delete clone.roleMap;
+  delete clone.hands;
+  delete clone.deck;
   return clone;
 }

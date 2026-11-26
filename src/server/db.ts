@@ -6,6 +6,7 @@ import { ALL_COMMANDS } from '../core/commandInventory';
 import { DEFAULT_PREFIXES } from '../core/prefixParser';
 import { GAME_REGISTRY } from '../core/gameRules';
 import { JKT48_DIFFICULTY_LEVELS, JKT48_TEAMS } from '../core/jkt48Classification';
+import { TEBAK_EMOJI_SEED, UNDERCOVER_WORD_PAIRS_SEED } from '../core/gameContentSeed';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 if (!fs.existsSync(DATA_DIR)) {
@@ -47,7 +48,7 @@ export function runMigrations(): void {
       balance INTEGER NOT NULL DEFAULT 100,
       exp INTEGER NOT NULL DEFAULT 0,
       level INTEGER NOT NULL DEFAULT 1,
-      daily_limit INTEGER NOT NULL DEFAULT 25,
+      daily_limit INTEGER NOT NULL DEFAULT 50,
       used_today INTEGER NOT NULL DEFAULT 0,
       streak INTEGER NOT NULL DEFAULT 0,
       privacy_opt_out INTEGER NOT NULL DEFAULT 0,
@@ -170,6 +171,7 @@ export function runMigrations(): void {
       command_name TEXT PRIMARY KEY,
       custom_cooldown_sec INTEGER,
       custom_limit INTEGER,
+      limit_cost INTEGER,
       free_access INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (command_name) REFERENCES commands(name) ON DELETE CASCADE
@@ -332,7 +334,7 @@ export function runMigrations(): void {
 
     CREATE TABLE IF NOT EXISTS limits (
       user_phone TEXT PRIMARY KEY,
-      daily_quota INTEGER NOT NULL DEFAULT 25,
+      daily_quota INTEGER NOT NULL DEFAULT 50,
       used_today INTEGER NOT NULL DEFAULT 0,
       reset_date TEXT NOT NULL
     );
@@ -761,6 +763,7 @@ export function runMigrations(): void {
   ensureColumn('forty_eight_members', 'difficulty_level', 'TEXT');
   ensureColumn('forty_eight_members', 'primary_team_id', 'TEXT');
   ensureColumn('forty_eight_members', 'team_group', 'TEXT');
+  ensureColumn('forty_eight_members', 'birth_date', 'TEXT');
   ensureColumn('forty_eight_discography', 'era_id', 'TEXT');
   ensureColumn('forty_eight_discography', 'difficulty_level', 'TEXT');
   ensureColumn('forty_eight_theater', 'era_id', 'TEXT');
@@ -774,6 +777,148 @@ export function runMigrations(): void {
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_48_q_level ON forty_eight_questions(difficulty_level, group_id, validation_status);
+  `);
+
+  // v5.0 tables: Streaks, Limit Transactions, Undercover & Tebak Emoji Banks, Anti-Abuse & Exploit Prevention
+  ensureColumn('command_settings', 'limit_cost', 'INTEGER');
+  ensureColumn('game_sessions', 'updated_at', 'TEXT');
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pair_streaks (
+      id TEXT PRIMARY KEY,
+      pair_key TEXT UNIQUE NOT NULL,
+      user_a TEXT NOT NULL,
+      user_b TEXT NOT NULL,
+      initiator_phone TEXT NOT NULL,
+      partner_phone TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      current_streak INTEGER NOT NULL DEFAULT 0,
+      longest_streak INTEGER NOT NULL DEFAULT 0,
+      last_active_date TEXT,
+      user_a_last_ping_date TEXT,
+      user_b_last_ping_date TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS pair_streak_restores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      streak_id TEXT NOT NULL,
+      month_key TEXT NOT NULL,
+      restored_date TEXT NOT NULL,
+      restored_by TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS group_streaks (
+      group_id TEXT PRIMARY KEY,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      current_streak INTEGER NOT NULL DEFAULT 0,
+      longest_streak INTEGER NOT NULL DEFAULT 0,
+      last_active_date TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS group_streak_daily_logs (
+      group_id TEXT NOT NULL,
+      date_key TEXT NOT NULL,
+      actors_json TEXT NOT NULL DEFAULT '[]',
+      bot_message_count INTEGER NOT NULL DEFAULT 0,
+      activated INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (group_id, date_key)
+    );
+
+    CREATE TABLE IF NOT EXISTS group_streak_restores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id TEXT NOT NULL,
+      month_key TEXT NOT NULL,
+      restored_date TEXT NOT NULL,
+      restored_by TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS limit_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tx_key TEXT UNIQUE,
+      actor_phone TEXT NOT NULL,
+      target_phone TEXT NOT NULL,
+      tx_type TEXT NOT NULL,
+      delta_limit INTEGER NOT NULL,
+      delta_balance INTEGER NOT NULL DEFAULT 0,
+      limit_after INTEGER NOT NULL,
+      command_name TEXT,
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS undercover_word_pairs (
+      id TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      civilian_id TEXT NOT NULL,
+      undercover_id TEXT NOT NULL,
+      civilian_en TEXT NOT NULL,
+      undercover_en TEXT NOT NULL,
+      civilian_ja TEXT NOT NULL,
+      undercover_ja TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS tebakemoji_questions (
+      id TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      emoji_prompt TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      aliases_json TEXT NOT NULL DEFAULT '[]',
+      hint TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS abuse_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_phone TEXT NOT NULL,
+      chat_id TEXT,
+      submodule TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      action_taken TEXT NOT NULL,
+      command_name TEXT,
+      detail TEXT NOT NULL,
+      resolved INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS abuse_restrictions (
+      user_phone TEXT PRIMARY KEY,
+      restriction_level TEXT NOT NULL DEFAULT 'none',
+      reason TEXT,
+      warnings_count INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT,
+      updated_by TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS media_jobs (
+      id TEXT PRIMARY KEY,
+      command TEXT NOT NULL,
+      user_phone TEXT,
+      input_kind TEXT NOT NULL,
+      output_format TEXT NOT NULL,
+      bytes_out INTEGER NOT NULL DEFAULT 0,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      validation_ok INTEGER NOT NULL DEFAULT 0,
+      delivery_mode TEXT NOT NULL DEFAULT 'preview',
+      delivery_status TEXT NOT NULL DEFAULT 'pending',
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      error_message TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pair_streaks_users ON pair_streaks(user_a, user_b, status);
+    CREATE INDEX IF NOT EXISTS idx_limit_tx_target ON limit_transactions(target_phone, created_at);
+    CREATE INDEX IF NOT EXISTS idx_abuse_events_user ON abuse_events(user_phone, severity, created_at);
+    CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id, user_phone);
+    CREATE INDEX IF NOT EXISTS idx_media_jobs_cmd ON media_jobs(command, created_at);
   `);
 }
 
@@ -802,6 +947,34 @@ export function seedDatabase(): void {
     ['redeem_msg_expired', 'Kode redeem {code} sudah kedaluwarsa.', 0],
     ['redeem_msg_limit', 'Kuota klaim untuk kode {code} sudah habis atau batas klaim Anda telah tercapai.', 0],
     ['redeem_msg_invalid', 'Kode redeem {code} tidak ditemukan atau sedang nonaktif.', 0],
+    ['bot_timezone', 'Asia/Jakarta', 0],
+    ['limit_initial_general', '50', 0],
+    ['limit_price_per_unit', '25', 0],
+    ['limit_default_cost', '1', 0],
+    ['limit_allow_self_gift', 'false', 0],
+    ['limit_exempt_commands', 'menu,help,ping,runtime,infobot,version,changelog,owner,sender,limit,balance,level,profile,cekpremium,addlimit,buylimit,redeem', 0],
+    ['bom_grid_size', '12', 0],
+    ['bom_bomb_count', '3', 0],
+    ['bom_reward_per_step', '25', 0],
+    ['bom_clear_bonus', '100', 0],
+    ['bom_bomb_penalty', '40', 0],
+    ['bom_partial_reward_pct', '50', 0],
+    ['max_quiz_wrong_attempts', '5', 0],
+    ['streak_max_pairs', '10', 0],
+    ['streak_max_restores_per_month', '5', 0],
+    ['leaderboard_limit', '10', 0],
+    ['abuse_config_json', JSON.stringify({
+      anti_spam: { enabled: true, maxPerMinute: 20, minIntervalMs: 600, burstCooldownSec: 15 },
+      anti_exploit: { enabled: true, blockRepeatedFailuresThreshold: 8, detectNegativeAmountAttempt: true },
+      anti_double_claim: { enabled: true, lockWindowSec: 5 },
+      session_protection: { enabled: true, unoTimeoutSec: 60, singleRoomLock: true },
+      economy_protection: { enabled: true, maxAddLimitPerTx: 500, maxTransferPerTx: 50000, allowBomNegativeBalance: true },
+      permission_guard: { enabled: true, strictOwnerAndAdminCheck: true },
+      resource_protection: { enabled: true, maxMediaTextLength: 100, queueMinDelayMs: 2000, queueMaxDelayMs: 5000 },
+      audit_monitoring: { enabled: true, retainDays: 30 },
+      auto_recovery: { enabled: true, sweepExpiredSessionsEverySec: 60 },
+      abuse_management: { enabled: true, autoWarnThreshold: 3, autoTempRestrictMinutes: 10, requireOwnerForPermanentBan: true },
+    }), 0],
   ];
 
   const insertSetting = db.prepare(
@@ -837,6 +1010,12 @@ export function seedDatabase(): void {
     'INSERT OR IGNORE INTO command_settings (command_name) VALUES (?)',
   );
 
+  const syncCmdMeta = db.prepare(`
+    UPDATE commands
+    SET description = ?, example = ?, permission = ?, status = ?, is_owner_only = ?, has_real_handler = ?, required_plugin = ?, implementation_version = '5.0.0'
+    WHERE name = ?
+  `);
+
   db.transaction(() => {
     for (const cmd of ALL_COMMANDS) {
       insertCmd.run(
@@ -857,6 +1036,16 @@ export function seedDatabase(): void {
         cmd.isOwnerOnly ? 1 : 0,
         cmd.notes ?? null,
         cmd.sourceCorrection ?? null,
+      );
+      syncCmdMeta.run(
+        cmd.description,
+        cmd.example,
+        cmd.permission,
+        cmd.status,
+        cmd.isOwnerOnly ? 1 : 0,
+        cmd.hasRealHandler ? 1 : 0,
+        cmd.requiredPlugin ?? null,
+        cmd.name,
       );
       insertCmdSettings.run(cmd.name);
       for (const alias of cmd.aliases) {
@@ -970,11 +1159,11 @@ export function seedDatabase(): void {
   `);
   const insertBalance = db.prepare(`INSERT OR IGNORE INTO balances (user_phone, amount) VALUES (?, ?)`);
   db.transaction(() => {
-    insertUser.run('usr-web-guest', '6280000000001', 'Pengunjung Web', 'user', 0, 500, 120, 2, 25, 3);
+    insertUser.run('usr-web-guest', '6280000000001', 'Pengunjung Web', 'user', 0, 500, 120, 2, 50, 3);
     insertBalance.run('6280000000001', 500);
     insertUser.run('usr-demo-1', '6281234567890', 'Raka Pratama', 'user', 1, 840, 460, 5, 50, 9);
     insertBalance.run('6281234567890', 840);
-    insertUser.run('usr-demo-2', '6281987654321', 'Nadia Kusuma', 'user', 0, 620, 310, 4, 25, 6);
+    insertUser.run('usr-demo-2', '6281987654321', 'Nadia Kusuma', 'user', 0, 620, 310, 4, 50, 6);
     insertBalance.run('6281987654321', 620);
   })();
 
@@ -988,7 +1177,39 @@ export function seedDatabase(): void {
     antibot: { enabled: false, mode: 'warn' },
     antigroupsw: { enabled: false, mode: 'warn' },
     antimentionsw: { enabled: false, mode: 'warn' },
+    antisticker: { enabled: false, mode: 'warn' },
   }));
+
+  db.prepare(`INSERT OR IGNORE INTO group_members (group_id, user_phone, role, message_count) VALUES ('1203630001@g.us', '6281234567890', 'admin', 12)`).run();
+  db.prepare(`INSERT OR IGNORE INTO group_members (group_id, user_phone, role, message_count) VALUES ('1203630001@g.us', '6281987654321', 'member', 8)`).run();
+
+  // 9.5 Seed 210 Undercover Word Pairs & 195 Tebak Emoji Questions
+  const insertUndercover = db.prepare(`
+    INSERT OR IGNORE INTO undercover_word_pairs (
+      id, category, civilian_id, undercover_id, civilian_en, undercover_en, civilian_ja, undercover_ja
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertEmojiQ = db.prepare(`
+    INSERT OR IGNORE INTO tebakemoji_questions (id, category, emoji_prompt, answer, aliases_json, hint)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  db.transaction(() => {
+    for (const pair of UNDERCOVER_WORD_PAIRS_SEED) {
+      insertUndercover.run(
+        pair.id,
+        pair.category,
+        pair.civilian_id,
+        pair.undercover_id,
+        pair.civilian_en,
+        pair.undercover_en,
+        pair.civilian_ja,
+        pair.undercover_ja,
+      );
+    }
+    for (const q of TEBAK_EMOJI_SEED) {
+      insertEmojiQ.run(q.id, q.category, q.emoji_prompt, q.answer, JSON.stringify(q.aliases), q.hint);
+    }
+  })();
 
   // 10. 48GROUP INTELLIGENCE CENTER SEED (10 Official Groups + Verified Members + Discography + Theater + Events + Terminology + Questions + Pending Review Queue)
   const insert48Group = db.prepare(`
@@ -1086,6 +1307,8 @@ export function seedDatabase(): void {
     insert48Event.run('evt-jkt48-theater-reguler', 'jkt48', 'Pertunjukan Reguler Theater JKT48', 'Theater', 'Jadwal Mingguan Resmi', 'Theater JKT48, fX Sudirman Lt. 4 Jakarta', 'Jadwal pertunjukan reguler dan seitansai diperbarui melalui halaman jadwal resmi JKT48.', 'Jadwal Theater JKT48', 'https://jkt48.com/theater/schedule?lang=id', nowIso);
     insert48Event.run('evt-jkt48-vc-mng', 'jkt48', 'Video Call & Meet and Greet Resmi', 'Meet and Greet', 'Sesuai Pengumuman Periode Single', 'Portal Resmi JKT48', 'Sesi interaksi penggemar resmi berdasarkan kepemilikan tiket digital periode aktif.', 'Pengumuman Resmi JKT48', 'https://jkt48.com/news/list?lang=id', nowIso);
     insert48Event.run('evt-akb48-theater', 'akb48', 'AKB48 Theater Live Performance', 'Theater', 'Jadwal Harian Resmi', 'AKB48 Theater, Don Quijote Akihabara 8F', 'Pertunjukan panggung harian AKB48 yang diumumkan via portal resmi.', 'AKB48 Theater Schedule', 'https://www.akb48.co.jp/theater/', nowIso);
+    insert48Event.run('evt-akb48-anniv-2026', 'akb48', 'AKB48 Theater Anniversary (Debut 8 Des 2005)', 'Konser / Anniversary', '2026-12-08', 'AKB48 Theater, Akihabara Tokyo', 'Peringatan tahunan pembukaan AKB48 Theater sejak 8 Desember 2005.', 'AKB48 Official Website', 'https://www.akb48.co.jp/', nowIso);
+    insert48Event.run('evt-jkt48-anniv-2026', 'jkt48', 'JKT48 15th Anniversary Milestone (Debut 17 Des 2011)', 'Konser / Anniversary', '2026-12-17', 'Theater JKT48 / Jakarta', 'Peringatan tahunan debut resmi JKT48 sejak 17 Desember 2011; detail konser resmi diumumkan di situs JKT48.', 'Situs Resmi JKT48', 'https://jkt48.com/about/jkt48?lang=id', nowIso);
   })();
 
   const insert48Term = db.prepare(`
@@ -1263,9 +1486,28 @@ export function seedDatabase(): void {
       ['evt-jkt48-theater-reguler', 'level_1'],
       ['evt-jkt48-vc-mng', 'level_1'],
       ['evt-jkt48-one-2021', 'level_2'],
+      ['evt-jkt48-anniv-2026', 'level_1'],
     ];
     for (const [id, eraId] of eventMeta) {
       db.prepare(`UPDATE forty_eight_events SET era_id = COALESCE(era_id, ?), difficulty_level = COALESCE(difficulty_level, ?) WHERE id = ?`).run(eraId, eraId, id);
+    }
+
+    const memberBirthdays: Array<[string, string]> = [
+      ['jkt48-freya', '2006-02-13'],
+      ['jkt48-gracia', '1999-08-31'],
+      ['jkt48-christy', '2005-12-05'],
+      ['jkt48-marsha', '2006-01-09'],
+      ['jkt48-shani', '1998-10-05'],
+      ['jkt48-melody', '1992-03-24'],
+      ['akb48-oguri', '2001-12-26'],
+      ['bnk48-cherprang', '1996-05-02'],
+      ['jkt48-haruka', '1992-02-10'],
+      ['jkt48-veranda', '1993-08-19'],
+      ['jkt48-greesel', '2006-01-10'],
+      ['jkt48-fiony', '2002-02-04'],
+    ];
+    for (const [id, birthDate] of memberBirthdays) {
+      db.prepare(`UPDATE forty_eight_members SET birth_date = COALESCE(birth_date, ?) WHERE id = ?`).run(birthDate, id);
     }
   })();
 
@@ -1368,17 +1610,29 @@ export function addAuditLog(actor: string, action: string, target: string, detai
   );
 }
 
-export function applyUserBalanceAndExp(userPhone: string, displayName: string, deltaBalance: number, deltaExp: number, reason: string, refId?: string): { balance: number; exp: number; level: number } {
+export function applyUserBalanceAndExp(
+  userPhone: string,
+  displayName: string,
+  deltaBalance: number,
+  deltaExp: number,
+  reason: string,
+  refId?: string,
+  options?: { allowNegative?: boolean },
+): { balance: number; exp: number; level: number } {
   return db.transaction(() => {
+    const initialLimitSetting = db.prepare(`SELECT value FROM settings WHERE key = 'limit_initial_general'`).get() as { value: string } | undefined;
+    const initialLimit = Math.max(1, Number(initialLimitSetting?.value ?? 50) || 50);
+
     db.prepare(
-      `INSERT OR IGNORE INTO users (id, phone, display_name, balance, exp, level) VALUES (?, ?, ?, 100, 0, 1)`,
-    ).run(`usr-${userPhone}`, userPhone, displayName || userPhone);
+      `INSERT OR IGNORE INTO users (id, phone, display_name, balance, exp, level, daily_limit) VALUES (?, ?, ?, 100, 0, 1, ?)`,
+    ).run(`usr-${userPhone}`, userPhone, displayName || userPhone, initialLimit);
 
     const user = db
       .prepare('SELECT balance, exp, level FROM users WHERE phone = ?')
       .get(userPhone) as { balance: number; exp: number; level: number };
 
-    const newBalance = Math.max(0, user.balance + deltaBalance);
+    const rawNextBalance = user.balance + deltaBalance;
+    const newBalance = options?.allowNegative ? rawNextBalance : Math.max(0, rawNextBalance);
     const newExp = Math.max(0, user.exp + deltaExp);
     const newLevel = Math.max(1, Math.floor(newExp / 100) + 1);
 

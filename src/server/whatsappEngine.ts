@@ -1,6 +1,10 @@
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  downloadMediaMessage,
+  extractMessageContent,
+  getContentType,
+  isJidNewsletter,
   useMultiFileAuthState,
   WASocket,
 } from '@whiskeysockets/baileys';
@@ -14,18 +18,54 @@ import {
   ALL_COMMANDS,
   findCommandByNameOrAlias,
 } from '../core/commandInventory';
+import { botText, normalizeBotLang, BotLang } from '../core/botI18n';
 import { FOLIO_GUIDE_ID, parseFolioText } from '../core/folioParser';
 import { isIndonesianPhoneNumber, maskPhoneNumberForGroup } from '../core/gameRules';
 import { DEFAULT_PREFIXES, parseCommandInput } from '../core/prefixParser';
-import { CommandCategory, GameChatScope } from '../core/types';
+import { CommandCategory, ConfiguredAdditionalReward, GameChatScope, Jkt48DifficultyLevelId, Jkt48TeamGroupId } from '../core/types';
+import {
+  JKT48_DIFFICULTY_LEVELS,
+  JKT48_TEAM_GROUPS,
+  JKT48_TEAMS,
+  getDifficultyLevelMeta,
+  getTeamMeta,
+  getTeamsByGroup,
+} from '../core/jkt48Classification';
+import { validateAdditionalReward } from '../core/redeemEngine';
 import { runNexaraAiQuery } from './aiService';
+import { checkUserAbuseGate, recordAbuseEvent } from './abuseService';
 import {
   addAuditLog,
   addSystemLog,
   applyUserBalanceAndExp,
   db,
 } from './db';
+import {
+  consumeLimitForCommand,
+  ensureUserRecord,
+  executeAddLimit,
+  formatLeaderboardMessage,
+  isUserPremiumValid,
+  normalizePhoneDigits,
+} from './economyService';
 import { startGameSession, submitGameAction } from './gameEngine';
+import {
+  convertMediaToLivePhotoBundle,
+  convertStickerAudioBundle,
+  convertStickerToImage,
+  generateBratSticker,
+  generateMockupImage,
+  generateSpotifyCard,
+  LivePhotoBundle,
+  SoundStickerBundle,
+  updateMediaJobDelivery,
+} from './mediaService';
+import {
+  deliverMotionPhotoViaSocket,
+  deliverSoundStickerViaSocket,
+  installWhatsAppV5ProtoExtensions,
+} from './waMediaProtocol';
+import { PrivateDeliveryItem, stopUnoSession } from './multiplayerGames';
 import {
   createRedeemCode,
   deleteRedeemCode,
@@ -40,15 +80,17 @@ import {
   updateRedeemCode,
 } from './redeemService';
 import {
-  JKT48_DIFFICULTY_LEVELS,
-  JKT48_TEAM_GROUPS,
-  JKT48_TEAMS,
-  getDifficultyLevelMeta,
-  getTeamMeta,
-  getTeamsByGroup,
-} from '../core/jkt48Classification';
-import { ConfiguredAdditionalReward, Jkt48DifficultyLevelId, Jkt48TeamGroupId } from '../core/types';
-import { validateAdditionalReward } from '../core/redeemEngine';
+  formatGroupStreakStatus,
+  formatPairStreakStatus,
+  getGroupStreakTopList,
+  invitePairStreak,
+  recordGroupStreakBotInteraction,
+  recordPairStreakMutualInteraction,
+  respondPairStreakInvite,
+  restoreGroupStreak,
+  restorePairStreak,
+  setGroupStreakEnabled,
+} from './streakService';
 
 const WA_AUTH_DIR = path.resolve(process.cwd(), 'data', 'wa-auth');
 if (!fs.existsSync(WA_AUTH_DIR)) {
@@ -62,9 +104,17 @@ export interface IncomingBotMessage {
   senderPhone: string;
   senderName: string;
   text: string;
+  messageId?: string;
   mentions?: string[];
   hasReply?: boolean;
+  quotedSenderPhone?: string;
+  quotedMediaKind?: 'image' | 'video' | 'sticker' | 'audio' | 'none';
+  quotedMediaBuffer?: Buffer;
+  attachedImageBase64?: string;
+  attachedAudioBase64?: string;
   hasMedia?: boolean;
+  isStickerMessage?: boolean;
+  hasAudioContext?: boolean;
   isGroupAdmin?: boolean;
   source?: 'whatsapp' | 'simulator';
 }
@@ -82,11 +132,30 @@ export interface BotDispatchResponse {
   };
   folioPreview?: ReturnType<typeof parseFolioText>;
   qrDataUrl?: string;
+  mediaPreview?: {
+    kind: string;
+    mimetype: string;
+    dataUrl?: string;
+    stillDataUrl?: string;
+    motionVideoDataUrl?: string;
+    motionPhotoJpgDataUrl?: string;
+    audioDataUrl?: string;
+    waveform?: number[];
+    jobId?: string;
+    validation?: Record<string, unknown>;
+    caption?: string;
+  };
+  privateDeliveries?: PrivateDeliveryItem[];
   commandExecuted?: string;
   status: 'ok' | 'denied' | 'pending' | 'error' | 'ignored';
 }
 
 type EventBroadcaster = (eventType: string, payload: unknown) => void;
+
+interface QueuedOutboundItem {
+  jid: string;
+  payload: Record<string, unknown>;
+}
 
 class WhatsAppEngineManager {
   private sock: WASocket | null = null;
@@ -98,9 +167,26 @@ class WhatsAppEngineManager {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private startedAt = Date.now();
   private broadcaster: EventBroadcaster = () => {};
-  private messageQueue: Array<{ jid: string; text: string }> = [];
+  private messageQueue: QueuedOutboundItem[] = [];
   private isFlushingQueue = false;
   private cooldownMap = new Map<string, number>();
+  private scheduledTimers = new Set<NodeJS.Timeout>();
+  private mediaOutbox: Map<
+    string,
+    {
+      kind: string;
+      mimetype: string;
+      buffer: Buffer;
+      caption?: string;
+      jobId?: string;
+      livePhotoBundle?: LivePhotoBundle;
+      soundStickerBundle?: SoundStickerBundle;
+    }
+  > = new Map();
+  private pendingStickerAudioVisual: Map<
+    string,
+    { kind: 'image' | 'sticker'; buffer: Buffer; expiresAt: number }
+  > = new Map();
 
   public setBroadcaster(fn: EventBroadcaster): void {
     this.broadcaster = fn;
@@ -152,6 +238,7 @@ class WhatsAppEngineManager {
     }
 
     try {
+      installWhatsAppV5ProtoExtensions();
       this.status = 'connecting';
       this.lastError = null;
       this.persistSessionState();
@@ -215,15 +302,57 @@ class WhatsAppEngineManager {
           const jid = msg.key.remoteJid;
           if (!jid) continue;
 
+          const inner = extractMessageContent(msg.message) || msg.message;
+          const contentType = getContentType(inner);
           const isGroup = jid.endsWith('@g.us');
           const senderJid = isGroup ? (msg.key.participant || jid) : jid;
-          const senderPhone = senderJid.split('@')[0].split(':')[0];
+          const senderPhone = normalizePhoneDigits(senderJid.split('@')[0].split(':')[0]);
+
           const text =
-            msg.message.conversation ||
-            msg.message.extendedTextMessage?.text ||
-            msg.message.imageMessage?.caption ||
-            msg.message.videoMessage?.caption ||
+            inner.conversation ||
+            inner.extendedTextMessage?.text ||
+            inner.imageMessage?.caption ||
+            inner.videoMessage?.caption ||
             '';
+
+          const ctxInfo =
+            inner.extendedTextMessage?.contextInfo ||
+            inner.imageMessage?.contextInfo ||
+            inner.videoMessage?.contextInfo ||
+            inner.stickerMessage?.contextInfo;
+
+          const mentions = Array.isArray(ctxInfo?.mentionedJid)
+            ? ctxInfo.mentionedJid.map((mj: string) => normalizePhoneDigits(mj.split('@')[0].split(':')[0])).filter(Boolean)
+            : [];
+          const quotedSenderPhone = ctxInfo?.participant
+            ? normalizePhoneDigits(String(ctxInfo.participant).split('@')[0].split(':')[0])
+            : undefined;
+          const quotedContent = ctxInfo?.quotedMessage ? extractMessageContent(ctxInfo.quotedMessage) || ctxInfo.quotedMessage : null;
+
+          // Strictly inspect sticker BEFORE audio so stickers with context never get misclassified as audio!
+          const isStickerMessage = contentType === 'stickerMessage' || Boolean(inner.stickerMessage);
+          let quotedMediaKind: IncomingBotMessage['quotedMediaKind'] = 'none';
+          if (quotedContent?.stickerMessage) quotedMediaKind = 'sticker';
+          else if (quotedContent?.imageMessage) quotedMediaKind = 'image';
+          else if (quotedContent?.videoMessage) quotedMediaKind = 'video';
+          else if (quotedContent?.audioMessage) quotedMediaKind = 'audio';
+          else if (inner.stickerMessage) quotedMediaKind = 'sticker';
+          else if (inner.imageMessage) quotedMediaKind = 'image';
+          else if (inner.videoMessage) quotedMediaKind = 'video';
+          else if (inner.audioMessage) quotedMediaKind = 'audio';
+
+          let isGroupAdmin = false;
+          let groupName: string | undefined;
+          if (isGroup && this.sock) {
+            try {
+              const meta = await this.sock.groupMetadata(jid);
+              groupName = meta.subject;
+              const pInfo = meta.participants.find((p) => normalizePhoneDigits(p.id.split('@')[0].split(':')[0]) === senderPhone);
+              isGroupAdmin = Boolean(pInfo && (pInfo.admin === 'admin' || pInfo.admin === 'superadmin'));
+            } catch {
+              // fallback false
+            }
+          }
 
           // Respect Blue Tick Control ON/OFF
           const blueTick = db
@@ -237,19 +366,137 @@ class WhatsAppEngineManager {
             }
           }
 
+          // Anti-sticker check in group chat (protects against incoming stickers even if wrapped)
+          if (isGroup && isStickerMessage && !isGroupAdmin && !this.isOwnerPhone(senderPhone)) {
+            const grpRow = db.prepare('SELECT anti_settings_json FROM groups WHERE id = ?').get(jid) as
+              | { anti_settings_json: string }
+              | undefined;
+            if (grpRow?.anti_settings_json) {
+              try {
+                const anti = JSON.parse(grpRow.anti_settings_json);
+                if (anti?.antisticker?.enabled && this.sock) {
+                  if (anti.antisticker.mode === 'delete' || anti.antisticker.mode === 'warn') {
+                    try {
+                      await this.sock.sendMessage(jid, { delete: msg.key });
+                    } catch {
+                      // ignore if bot lacks admin delete right
+                    }
+                    this.enqueueMessage(jid, `⚠️ Anti-stiker aktif di grup ini (${maskPhoneNumberForGroup(senderPhone)}).`);
+                    continue;
+                  }
+                }
+              } catch {
+                // ignore malformed json
+              }
+            }
+          }
+
+          // Download quoted/attached media only for commands that consume media buffers
+          let quotedMediaBuffer: Buffer | undefined;
+          const lowerText = text.toLowerCase();
+          if (
+            quotedMediaKind !== 'none' &&
+            /\b(toimg|tolive|iqcdark|iqcimage|stickeraudio|sa)\b/.test(lowerText) &&
+            this.sock
+          ) {
+            try {
+              const targetDownloadMsg = quotedContent
+                ? ({ key: msg.key, message: quotedContent } as any)
+                : (msg as any);
+              const downloaded = await downloadMediaMessage(targetDownloadMsg, 'buffer', {});
+              if (Buffer.isBuffer(downloaded)) {
+                quotedMediaBuffer = downloaded;
+              }
+            } catch {
+              // Graceful fallback handled by mediaService
+            }
+          }
+
           const result = await this.processIncomingMessage({
             chatId: jid,
             chatScope: isGroup ? 'group' : 'private',
+            groupName,
             senderPhone,
             senderName: msg.pushName || senderPhone,
             text,
-            hasReply: Boolean(msg.message.extendedTextMessage?.contextInfo?.quotedMessage),
-            hasMedia: Boolean(msg.message.imageMessage || msg.message.videoMessage || msg.message.audioMessage),
+            messageId: msg.key.id || undefined,
+            mentions,
+            hasReply: Boolean(ctxInfo?.quotedMessage),
+            quotedSenderPhone,
+            quotedMediaKind,
+            quotedMediaBuffer,
+            hasMedia: Boolean(inner.imageMessage || inner.videoMessage || inner.audioMessage || inner.stickerMessage),
+            isStickerMessage,
+            hasAudioContext: Boolean(inner.audioMessage || quotedContent?.audioMessage),
+            isGroupAdmin,
             source: 'whatsapp',
           });
 
-          if (result.handled && result.replyText) {
-            this.enqueueMessage(jid, result.replyText);
+          if (result.handled) {
+            const mediaEntry = result.commandExecuted ? this.mediaOutbox.get(`${jid}:${senderPhone}`) : undefined;
+            if (mediaEntry) {
+              this.mediaOutbox.delete(`${jid}:${senderPhone}`);
+              if (mediaEntry.kind === 'motion_photo' && mediaEntry.livePhotoBundle && this.sock) {
+                const b = mediaEntry.livePhotoBundle;
+                const liveRes = await deliverMotionPhotoViaSocket({
+                  sock: this.sock,
+                  jid,
+                  stillBuffer: b.stillBuffer,
+                  motionVideoBuffer: b.motionVideoBuffer,
+                  width: b.width,
+                  height: b.height,
+                  durationMs: b.durationMs,
+                  presentationOffsetMs: b.presentationOffsetMs,
+                  caption: result.replyText || mediaEntry.caption || '',
+                });
+                if (mediaEntry.jobId) {
+                  updateMediaJobDelivery(
+                    mediaEntry.jobId,
+                    'wa_paired_motion_photo',
+                    liveRes.ok ? 'sent' : 'failed',
+                    { parentId: liveRes.parentId, childId: liveRes.childId, socketError: liveRes.error },
+                  );
+                }
+                if (!liveRes.ok) {
+                  this.enqueueMessage(jid, `⚠️ Gagal kirim protokol Motion Photo (${liveRes.error}). Mengirim fallback video MP4...`);
+                  this.enqueuePayload(jid, { video: b.motionVideoBuffer, caption: mediaEntry.caption || '' });
+                }
+              } else if (mediaEntry.kind === 'sound_sticker' && mediaEntry.soundStickerBundle && this.sock) {
+                const sb = mediaEntry.soundStickerBundle;
+                const saRes = await deliverSoundStickerViaSocket({
+                  sock: this.sock,
+                  jid,
+                  stickerBuffer: sb.stickerBuffer,
+                  audioBuffer: sb.audioBuffer,
+                  audioSeconds: sb.audioSeconds,
+                  waveform: sb.waveform,
+                });
+                if (mediaEntry.jobId) {
+                  updateMediaJobDelivery(
+                    mediaEntry.jobId,
+                    'wa_sound_sticker_field26',
+                    saRes.ok ? 'sent' : 'failed',
+                    { messageId: saRes.messageId, socketError: saRes.error },
+                  );
+                }
+                if (!saRes.ok) {
+                  this.enqueueMessage(jid, `⚠️ Gagal kirim protokol Sound Sticker (${saRes.error}). Mengirim stiker animasi fallback...`);
+                  this.enqueuePayload(jid, { sticker: sb.stickerBuffer });
+                }
+              } else if (mediaEntry.kind === 'sticker') {
+                this.enqueuePayload(jid, { sticker: mediaEntry.buffer });
+              } else if (mediaEntry.kind === 'image') {
+                this.enqueuePayload(jid, { image: mediaEntry.buffer, caption: result.replyText || mediaEntry.caption || '' });
+              } else if (mediaEntry.kind === 'video') {
+                this.enqueuePayload(jid, {
+                  video: mediaEntry.buffer,
+                  gifPlayback: true,
+                  caption: result.replyText || mediaEntry.caption || '',
+                });
+              }
+            } else if (result.replyText) {
+              this.enqueueMessage(jid, result.replyText);
+            }
           }
         }
       });
@@ -269,6 +516,10 @@ class WhatsAppEngineManager {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    for (const timer of this.scheduledTimers) {
+      clearTimeout(timer);
+    }
+    this.scheduledTimers.clear();
     this.reconnectAttempts = 0;
     if (this.sock) {
       try {
@@ -286,8 +537,32 @@ class WhatsAppEngineManager {
   }
 
   public enqueueMessage(jid: string, text: string): void {
-    this.messageQueue.push({ jid, text });
+    this.enqueuePayload(jid, { text });
+  }
+
+  public enqueuePayload(jid: string, payload: Record<string, unknown>): void {
+    this.messageQueue.push({ jid, payload });
     void this.flushQueue();
+  }
+
+  public dispatchPrivateDeliveries(deliveries?: PrivateDeliveryItem[]): void {
+    if (!deliveries || deliveries.length === 0) return;
+    for (const item of deliveries) {
+      const targetPhone = normalizePhoneDigits(item.toPhone) || item.toPhone;
+      const targetJid = `${targetPhone}@s.whatsapp.net`;
+      const timer = setTimeout(() => {
+        this.scheduledTimers.delete(timer);
+        if (this.status === 'connected' && this.sock) {
+          this.enqueueMessage(targetJid, item.text);
+        }
+        this.broadcaster('chat:private_dm', {
+          toMasked: maskPhoneNumberForGroup(targetPhone),
+          delayMs: item.delayMs,
+          timestamp: new Date().toISOString(),
+        });
+      }, Math.max(0, item.delayMs));
+      this.scheduledTimers.add(timer);
+    }
   }
 
   private async flushQueue(): Promise<void> {
@@ -299,7 +574,7 @@ class WhatsAppEngineManager {
         if (!item) break;
         if (this.sock && this.status === 'connected') {
           try {
-            await this.sock.sendMessage(item.jid, { text: item.text });
+            await this.sock.sendMessage(item.jid, item.payload as any);
           } catch (err) {
             addSystemLog('warn', 'whatsappQueue', `Gagal mengirim pesan ke ${item.jid}: ${err instanceof Error ? err.message : 'error'}`);
           }
@@ -319,14 +594,29 @@ class WhatsAppEngineManager {
     return rows.length > 0 ? rows.map((r) => r.prefix) : [...DEFAULT_PREFIXES];
   }
 
-  public async processIncomingMessage(msg: IncomingBotMessage): Promise<BotDispatchResponse> {
+  private getBotLanguage(userLanguage?: string): BotLang {
+    const setting = db.prepare(`SELECT value FROM settings WHERE key = 'default_language'`).get() as { value: string } | undefined;
+    return normalizeBotLang(setting?.value || userLanguage);
+  }
+
+  public async processIncomingMessage(rawMsg: IncomingBotMessage): Promise<BotDispatchResponse> {
     const started = Date.now();
+    const senderPhone = normalizePhoneDigits(rawMsg.senderPhone) || rawMsg.senderPhone;
+    const msg: IncomingBotMessage = {
+      ...rawMsg,
+      senderPhone,
+      mentions: rawMsg.mentions?.map((m) => normalizePhoneDigits(m) || m).filter(Boolean),
+      quotedSenderPhone: rawMsg.quotedSenderPhone
+        ? normalizePhoneDigits(rawMsg.quotedSenderPhone) || rawMsg.quotedSenderPhone
+        : undefined,
+    };
     const isOwner = this.isOwnerPhone(msg.senderPhone);
 
-    // Ensure user & contact records exist
-    db.prepare(`
-      INSERT OR IGNORE INTO users (id, phone, display_name, role) VALUES (?, ?, ?, ?)
-    `).run(`usr-${msg.senderPhone}`, msg.senderPhone, msg.senderName || msg.senderPhone, isOwner ? 'owner' : 'user');
+    // Ensure user (initialGeneralLimit = 50) & contact records exist
+    const userObj = ensureUserRecord(msg.senderPhone, msg.senderName);
+    if (isOwner && userObj.role !== 'owner') {
+      db.prepare(`UPDATE users SET role = 'owner' WHERE phone = ?`).run(msg.senderPhone);
+    }
     db.prepare(`
       INSERT INTO contacts (id, phone, push_name, source, last_seen_at)
       VALUES (?, ?, ?, ?, datetime('now'))
@@ -335,9 +625,32 @@ class WhatsAppEngineManager {
 
     if (msg.chatScope === 'group') {
       db.prepare(`
-        INSERT OR IGNORE INTO groups (id, name, owner_phone) VALUES (?, ?, ?)
-      `).run(msg.chatId, msg.groupName || `Grup ${msg.chatId}`, msg.senderPhone);
+        INSERT INTO groups (id, name, owner_phone) VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET name = COALESCE(NULLIF(?, ''), name), updated_at = datetime('now')
+      `).run(msg.chatId, msg.groupName || `Grup ${msg.chatId}`, msg.senderPhone, msg.groupName || '');
+
+      // Track every active group member cleanly so #toplocal reflects real group participants without cross-group leakage
+      db.prepare(`
+        INSERT INTO group_members (group_id, user_phone, message_count)
+        VALUES (?, ?, 1)
+        ON CONFLICT(group_id, user_phone) DO UPDATE SET
+          message_count = group_members.message_count + 1
+      `).run(msg.chatId, msg.senderPhone);
     }
+
+    // Track mutual pair streak replies / mentions automatically
+    const streakTargets = Array.from(
+      new Set([...(msg.mentions || []), ...(msg.quotedSenderPhone ? [msg.quotedSenderPhone] : [])]),
+    );
+    if (streakTargets.length > 0) {
+      recordPairStreakMutualInteraction({
+        senderPhone: msg.senderPhone,
+        targetPhones: streakTargets,
+      });
+    }
+
+    const lang = this.getBotLanguage(userObj.language);
+    const t = botText(lang);
 
     // Broadcast inbound message to Live Chat Monitor (privacy-preserving)
     this.broadcaster('chat:message', {
@@ -371,6 +684,9 @@ class WhatsAppEngineManager {
       | undefined;
 
     if (activeWizard && (!parsed.isCommand || ['batal', 'cancel', 'exit'].includes(parsed.commandName))) {
+      if (msg.chatScope === 'group') {
+        recordGroupStreakBotInteraction({ groupId: msg.chatId, userPhone: msg.senderPhone });
+      }
       const wizardRes = this.handleWizardInput(activeWizard, msg, activePrefixes[0] || '.');
       this.emitOutbound(msg, wizardRes.replyText);
       return wizardRes;
@@ -391,16 +707,29 @@ class WhatsAppEngineManager {
           chatId: msg.chatId,
           input: msg.text,
         });
+        if (res.privateDeliveries?.length) {
+          this.dispatchPrivateDeliveries(res.privateDeliveries);
+        }
         if (res.announcement) {
+          if (msg.chatScope === 'group') {
+            recordGroupStreakBotInteraction({ groupId: msg.chatId, userPhone: msg.senderPhone });
+          }
           this.emitOutbound(msg, res.announcement);
           return {
             handled: true,
             replyText: res.announcement,
+            privateDeliveries: res.privateDeliveries,
             status: 'ok',
           };
         }
       }
+      // Note: ordinary chat between members without invoking bot MUST NOT count toward group streak!
       return { handled: false, replyText: '', status: 'ignored' };
+    }
+
+    // Group streak counts EVERY command/interaction with the bot without exception
+    if (msg.chatScope === 'group') {
+      recordGroupStreakBotInteraction({ groupId: msg.chatId, userPhone: msg.senderPhone });
     }
 
     // Resolve command from database registry (with alias resolution)
@@ -430,7 +759,7 @@ class WhatsAppEngineManager {
       } | undefined;
 
     if (!cmdRow) {
-      const reply = `Perintah "${parsed.prefix}${parsed.commandName}" tidak ditemukan di registry. Ketik ${parsed.prefix}menu untuk membuka daftar menu.`;
+      const reply = t.cmdNotFound(parsed.prefix!, parsed.commandName);
       this.emitOutbound(msg, reply);
       return { handled: true, replyText: reply, status: 'ignored' };
     }
@@ -438,46 +767,68 @@ class WhatsAppEngineManager {
     // Check Maintenance Mode
     const maint = db.prepare("SELECT value FROM settings WHERE key = 'maintenance_mode'").get() as { value: string } | undefined;
     if (maint?.value === 'true' && !isOwner) {
-      const reply = 'Sistem Freya-san Hub sedang dalam mode pemeliharaan oleh owner.';
+      const reply = t.maintenance;
       this.emitOutbound(msg, reply);
       return { handled: true, replyText: reply, status: 'denied', commandExecuted: cmdRow.name };
     }
 
     // Check banned user
-    const userRow = db
-      .prepare('SELECT is_banned, is_premium, used_today, daily_limit, balance, exp, level, streak FROM users WHERE phone = ?')
-      .get(msg.senderPhone) as {
-        is_banned: number;
-        is_premium: number;
-        used_today: number;
-        daily_limit: number;
-        balance: number;
-        exp: number;
-        level: number;
-        streak: number;
-      };
+    const latestUser = ensureUserRecord(msg.senderPhone, msg.senderName);
+    if (latestUser.is_banned && !isOwner) {
+      return { handled: true, replyText: t.restrictedUser('Akun dibatasi oleh administrator'), status: 'denied', commandExecuted: cmdRow.name };
+    }
 
-    if (userRow?.is_banned && !isOwner) {
-      return { handled: true, replyText: 'Akun Anda sedang dibatasi oleh administrator.', status: 'denied', commandExecuted: cmdRow.name };
+    // Anti-Abuse & Exploit Gate
+    const abuseGate = checkUserAbuseGate({
+      userPhone: msg.senderPhone,
+      chatId: msg.chatId,
+      commandName: cmdRow.name,
+      rawArgs: parsed.rawArgs,
+      isOwner,
+      lang,
+    });
+    if (!abuseGate.allowed) {
+      const reply = abuseGate.reason || t.restrictedUser();
+      this.recordCommandUsage(cmdRow.name, parsed.prefix!, msg, false, Date.now() - started, reply);
+      this.emitOutbound(msg, reply);
+      return { handled: true, replyText: reply, status: 'denied', commandExecuted: cmdRow.name };
     }
 
     // Check enabled flag
     if (!cmdRow.enabled) {
-      const reply = `Perintah ${parsed.prefix}${cmdRow.name} sedang dinonaktifkan oleh owner.`;
+      const reply = t.cmdDisabled(parsed.prefix!, cmdRow.name);
       this.emitOutbound(msg, reply);
       return { handled: true, replyText: reply, status: 'denied', commandExecuted: cmdRow.name };
     }
 
     // Permission validation
     if ((cmdRow.is_owner_only || cmdRow.permission === 'owner') && !isOwner) {
-      const reply = `Akses ditolak: perintah ${cmdRow.name} hanya untuk Owner.`;
+      recordAbuseEvent({
+        userPhone: msg.senderPhone,
+        chatId: msg.chatId,
+        submodule: 'permission_guard',
+        severity: 'rule_violation',
+        actionTaken: 'blocked_owner_cmd',
+        commandName: cmdRow.name,
+        detail: `User biasa mencoba command owner "${cmdRow.name}".`,
+      });
+      const reply = t.ownerOnly(cmdRow.name);
       this.recordCommandUsage(cmdRow.name, parsed.prefix!, msg, false, Date.now() - started, 'Owner permission required');
       this.emitOutbound(msg, reply);
       return { handled: true, replyText: reply, status: 'denied', commandExecuted: cmdRow.name };
     }
 
     if (cmdRow.permission === 'group_admin' && msg.chatScope === 'group' && !msg.isGroupAdmin && !isOwner) {
-      const reply = `Akses ditolak: perintah ${cmdRow.name} memerlukan hak Admin Grup.`;
+      recordAbuseEvent({
+        userPhone: msg.senderPhone,
+        chatId: msg.chatId,
+        submodule: 'permission_guard',
+        severity: 'rule_violation',
+        actionTaken: 'blocked_admin_cmd',
+        commandName: cmdRow.name,
+        detail: `Non-admin mencoba command admin grup "${cmdRow.name}".`,
+      });
+      const reply = t.adminOnly(cmdRow.name);
       this.recordCommandUsage(cmdRow.name, parsed.prefix!, msg, false, Date.now() - started, 'Group admin required');
       this.emitOutbound(msg, reply);
       return { handled: true, replyText: reply, status: 'denied', commandExecuted: cmdRow.name };
@@ -489,18 +840,40 @@ class WhatsAppEngineManager {
       const expires = this.cooldownMap.get(cdKey) ?? 0;
       if (Date.now() < expires) {
         const waitSec = Math.ceil((expires - Date.now()) / 1000);
-        const reply = `Cooldown aktif untuk ${cmdRow.name}. Tunggu ${waitSec} detik lagi.`;
+        const reply = t.cooldown(cmdRow.name, waitSec);
         this.emitOutbound(msg, reply);
         return { handled: true, replyText: reply, status: 'denied', commandExecuted: cmdRow.name };
       }
       this.cooldownMap.set(cdKey, Date.now() + cmdRow.cooldown_sec * 1000);
     }
 
+    // Unified Limit deduction (premium & owner & exempt commands cost 0; never deduct pending_specification/integration)
+    if (cmdRow.status === 'active' && cmdRow.has_real_handler) {
+      const limitCheck = consumeLimitForCommand({
+        userPhone: msg.senderPhone,
+        displayName: msg.senderName,
+        commandName: cmdRow.name,
+        isOwnerActor: isOwner,
+        isOwnerCommand: Boolean(cmdRow.is_owner_only || cmdRow.permission === 'owner'),
+        txKey: msg.messageId ? `cmd-${msg.messageId}` : undefined,
+      });
+      if (!limitCheck.allowed) {
+        const reply = t.limitEmpty(parsed.prefix!);
+        this.recordCommandUsage(cmdRow.name, parsed.prefix!, msg, false, Date.now() - started, 'Limit depleted');
+        this.emitOutbound(msg, reply);
+        return { handled: true, replyText: reply, status: 'denied', commandExecuted: cmdRow.name };
+      }
+    }
+
     // Update prefix usage counter
     db.prepare('UPDATE prefixes SET usage_count = usage_count + 1 WHERE prefix = ?').run(parsed.prefix);
 
     // Execute command handler
-    const response = await this.executeCommandHandler(cmdRow, parsed.prefix!, parsed.rawArgs, parsed.args, msg, isOwner);
+    const response = await this.executeCommandHandler(cmdRow, parsed.prefix!, parsed.rawArgs, parsed.args, msg, isOwner, lang);
+    if (response.privateDeliveries?.length) {
+      this.dispatchPrivateDeliveries(response.privateDeliveries);
+    }
+
     this.recordCommandUsage(
       cmdRow.name,
       parsed.prefix!,
@@ -676,14 +1049,16 @@ class WhatsAppEngineManager {
     args: string[],
     msg: IncomingBotMessage,
     isOwner: boolean,
+    lang: BotLang = 'id',
   ): Promise<BotDispatchResponse> {
     const name = cmd.name;
+    const t = botText(lang);
 
     // Honest status for unverified / pending_specification commands
     if (cmd.status === 'pending_specification') {
       return {
         handled: true,
-        replyText: `Perintah "${prefix}${name}" berstatus pending_specification. Fungsi spesifik belum diverifikasi oleh owner dan tidak disimulasikan.`,
+        replyText: `Perintah "${prefix}${name}" masih berstatus pending_specification (belum diaktifkan secara spesifik oleh owner).`,
         status: 'pending',
       };
     }
@@ -691,7 +1066,7 @@ class WhatsAppEngineManager {
     if (cmd.status === 'pending_integration' || !cmd.has_real_handler) {
       return {
         handled: true,
-        replyText: `Perintah "${prefix}${name}" terdaftar (${cmd.category}) namun berstatus pending_integration karena memerlukan plugin/layanan eksternal aktif.`,
+        replyText: `Perintah "${prefix}${name}" masuk kategori ${cmd.category}, tapi integrasi layanan eksternalnya belum tersambung di server ini.`,
         status: 'pending',
       };
     }
@@ -704,7 +1079,7 @@ class WhatsAppEngineManager {
     if (name === 'ping') {
       const t0 = Date.now();
       const latency = Math.max(1, Date.now() - t0 + 1);
-      return { handled: true, replyText: `Pong! Freya-san Hub merespons dalam ${latency} ms. Status WA: ${this.status}.`, status: 'ok' };
+      return { handled: true, replyText: t.ping(latency, this.status), status: 'ok' };
     }
 
     if (name === 'runtime') {
@@ -712,14 +1087,23 @@ class WhatsAppEngineManager {
       const h = Math.floor(sec / 3600);
       const m = Math.floor((sec % 3600) / 60);
       const s = sec % 60;
-      return { handled: true, replyText: `Waktu aktif server & bot: ${h}j ${m}m ${s}d.`, status: 'ok' };
+      return {
+        handled: true,
+        replyText:
+          lang === 'en'
+            ? `Bot & server have been running for ${h}h ${m}m ${s}s.`
+            : lang === 'ja'
+            ? `サーバーとボットの稼働時間: ${h}時間 ${m}分 ${s}秒だよ。`
+            : `Bot & server sudah nyala selama ${h} jam ${m} menit ${s} detik.`,
+        status: 'ok',
+      };
     }
 
     if (name === 'version' || name === 'infobot') {
       const totalCmds = (db.prepare('SELECT COUNT(*) as c FROM commands').get() as { c: number }).c;
       return {
         handled: true,
-        replyText: `Freya-san Hub v5.0\nBot: Freya-san bot by Pak Ujan\nTotal Command Registry: ${totalCmds}\nPrefix Aktif: ${this.getActivePrefixes().join(' ')}`,
+        replyText: `Freya-san Hub v5.0\nBot: Freya-san bot by Pak Ujan\nTotal Command: ${totalCmds}\nPrefix Aktif: ${this.getActivePrefixes().join(' ')}`,
         status: 'ok',
       };
     }
@@ -727,16 +1111,15 @@ class WhatsAppEngineManager {
     if (name === 'changelog') {
       return {
         handled: true,
-        replyText: 'Freya-san Hub v5.0:\n- Arsitektur bersih full-stack TypeScript + SQLite\n- 10 Prefix aktif otomatis (dengan/tanpa spasi)\n- 48Group Intelligence & Verified Quiz Center\n- Game Session Engine terpisah untuk Private & Group',
+        replyText: 'Freya-san Hub v5.0:\n- Pembaruan Streak Pasangan & Streak Grup\n- Stiker Brat2/Bahlil/Spongebob & Mockup PNG [SIMULASI]\n- Undercover (210 kata), UNO Stop/Timeout, Bom Grid Dinamis, Tebak Emoji (195 soal)\n- Unified Limit System (#addlimit 3 mode) & Anti-Abuse 10 Submodul',
         status: 'ok',
       };
     }
 
     if (name === 'owner') {
-      // Never expose private owner phone number on public command
       return {
         handled: true,
-        replyText: 'Freya-san bot by Pak Ujan dikelola melalui Freya-san Hub Owner Console. Nomor privat owner dilindungi oleh kebijakan privasi sistem.',
+        replyText: 'Freya-san bot by Pak Ujan dikelola lewat Freya-san Hub Owner Console. Nomor pribadi owner tetap kami jaga privasinya ya.',
         status: 'ok',
       };
     }
@@ -746,33 +1129,33 @@ class WhatsAppEngineManager {
       return { handled: true, replyText: `Pengirim: ${msg.senderName} (${displayId}) | Ruang: ${msg.chatScope}`, status: 'ok' };
     }
 
-    // Prefix Manager (Section 7.3)
+    // Prefix Manager
     if (name === 'prefix' || name === 'listprefix') {
       const list = db.prepare('SELECT prefix, is_default, enabled, usage_count FROM prefixes ORDER BY sort_order ASC').all() as Array<{ prefix: string; is_default: number; enabled: number; usage_count: number }>;
       return {
         handled: true,
-        replyText: `Daftar Prefix Aktif:\n${list.map((p) => `${p.prefix} (${p.enabled ? 'ON' : 'OFF'}, pakai: ${p.usage_count}${p.is_default ? ', default' : ''})`).join('\n')}`,
+        replyText: `Daftar Prefix Aktif:\n${list.map((p) => `${p.prefix} (${p.enabled ? 'ON' : 'OFF'}, dipakai: ${p.usage_count}${p.is_default ? ', default' : ''})`).join('\n')}`,
         status: 'ok',
       };
     }
     if (name === 'addprefix') {
       const p = args[0];
-      if (!p || p.length > 3) return { handled: true, replyText: `Gunakan: ${prefix}addprefix <simbol>`, status: 'error' };
+      if (!p || p.length > 3) return { handled: true, replyText: `Formatnya: ${prefix}addprefix <simbol>`, status: 'error' };
       db.prepare('INSERT OR REPLACE INTO prefixes (prefix, is_default, enabled, sort_order) VALUES (?, 0, 1, 99)').run(p);
       addAuditLog(msg.senderPhone, 'prefix.add', p);
-      return { handled: true, replyText: `Prefix tambahan "${p}" berhasil ditambahkan dan diaktifkan.`, status: 'ok' };
+      return { handled: true, replyText: `Siap! Prefix tambahan "${p}" sudah ditambah dan diaktifkan.`, status: 'ok' };
     }
     if (name === 'delprefix') {
       const p = args[0];
-      if (!p) return { handled: true, replyText: `Gunakan: ${prefix}delprefix <simbol>`, status: 'error' };
+      if (!p) return { handled: true, replyText: `Formatnya: ${prefix}delprefix <simbol>`, status: 'error' };
       const existing = db.prepare('SELECT is_default FROM prefixes WHERE prefix = ?').get(p) as { is_default: number } | undefined;
-      if (!existing) return { handled: true, replyText: `Prefix "${p}" tidak ditemukan.`, status: 'error' };
+      if (!existing) return { handled: true, replyText: `Prefix "${p}" nggak ketemu.`, status: 'error' };
       if (existing.is_default) {
-        return { handled: true, replyText: `Prefix "${p}" adalah bagian dari 10 prefix default wajib. Gunakan toggle eksplisit di dashboard jika ingin menonaktifkan.`, status: 'denied' };
+        return { handled: true, replyText: `Prefix "${p}" itu termasuk 10 prefix bawaan wajib. Kalau mau nonaktifin, pakai toggle di dashboard ya.`, status: 'denied' };
       }
       db.prepare('DELETE FROM prefixes WHERE prefix = ?').run(p);
       addAuditLog(msg.senderPhone, 'prefix.delete', p);
-      return { handled: true, replyText: `Prefix tambahan "${p}" dihapus.`, status: 'ok' };
+      return { handled: true, replyText: `Prefix tambahan "${p}" sudah dihapus.`, status: 'ok' };
     }
     if (name === 'resetprefix') {
       db.transaction(() => {
@@ -780,32 +1163,162 @@ class WhatsAppEngineManager {
         db.prepare('UPDATE prefixes SET enabled = 1 WHERE is_default = 1').run();
       })();
       addAuditLog(msg.senderPhone, 'prefix.reset', 'default_10');
-      return { handled: true, replyText: 'Seluruh 10 prefix default dikembalikan ke kondisi aktif.', status: 'ok' };
+      return { handled: true, replyText: 'Semua 10 prefix bawaan sudah dikembalikan jadi aktif semua!', status: 'ok' };
+    }
+
+    // Streak Pasangan (#streak) & Streak Grup (#streakgrup)
+    if (name === 'streak') {
+      const sub = (args[0] || '').toLowerCase();
+      if (sub === 'acc' || sub === 'terima' || sub === 'accept') {
+        const initHint = msg.mentions?.[0] || msg.quotedSenderPhone || (args[1] ? args[1].replace(/\D/g, '') : undefined);
+        const res = respondPairStreakInvite({
+          responderPhone: msg.senderPhone,
+          accept: true,
+          initiatorHintPhone: initHint,
+          lang,
+        });
+        return { handled: true, replyText: res.message, status: res.ok ? 'ok' : 'error' };
+      }
+      if (sub === 'tolak' || sub === 'reject' || sub === 'decline') {
+        const initHint = msg.mentions?.[0] || msg.quotedSenderPhone || (args[1] ? args[1].replace(/\D/g, '') : undefined);
+        const res = respondPairStreakInvite({
+          responderPhone: msg.senderPhone,
+          accept: false,
+          initiatorHintPhone: initHint,
+          lang,
+        });
+        return { handled: true, replyText: res.message, status: res.ok ? 'ok' : 'error' };
+      }
+      if (sub === 'pulihkan' || sub === 'restore') {
+        const hint = msg.mentions?.[0] || msg.quotedSenderPhone || (args[1] ? args[1].replace(/\D/g, '') : undefined);
+        const res = restorePairStreak({
+          userPhone: msg.senderPhone,
+          partnerPhoneHint: hint,
+          lang,
+        });
+        return { handled: true, replyText: res.message, status: res.ok ? 'ok' : 'error' };
+      }
+
+      const rawTarget =
+        msg.mentions?.[0] ||
+        msg.quotedSenderPhone ||
+        (args[0] && /^(bot|minbot|freyabot|\+?\d{5,})$/i.test(args[0]) ? args[0] : undefined);
+      if (rawTarget) {
+        const res = invitePairStreak({
+          initiatorPhone: msg.senderPhone,
+          partnerPhone: rawTarget,
+          lang,
+        });
+        return { handled: true, replyText: res.message, status: res.ok ? 'ok' : res.ignoredBot ? 'denied' : 'error' };
+      }
+
+      return {
+        handled: true,
+        replyText: formatPairStreakStatus(msg.senderPhone, prefix, lang),
+        status: 'ok',
+      };
+    }
+
+    if (name === 'streakgrup') {
+      const sub = (args[0] || '').toLowerCase();
+      if (sub === 'top' || sub === 'rank' || sub === 'peringkat') {
+        const list = getGroupStreakTopList(10);
+        if (list.length === 0) {
+          return {
+            handled: true,
+            replyText: lang === 'en' ? 'No active group streaks recorded yet.' : 'Belum ada grup yang punya streak aktif nih.',
+            status: 'ok',
+          };
+        }
+        const lines = list.map((g) => `${g.rank}. *${g.groupName}* — 🔥 ${g.currentStreak} hari (rekor ${g.longestStreak})`);
+        return {
+          handled: true,
+          replyText: `🔥 *Peringkat Streak Grup Teratas*\n\n${lines.join('\n')}\n\n_${t.botFooter}_`,
+          status: 'ok',
+        };
+      }
+
+      if (msg.chatScope !== 'group') {
+        return {
+          handled: true,
+          replyText: lang === 'en' ? 'Use this command inside a WhatsApp group chat!' : 'Perintah ini khusus dipakai di dalam grup ya.',
+          status: 'error',
+        };
+      }
+
+      if (sub === 'on' || sub === 'off') {
+        if (!msg.isGroupAdmin && !isOwner) {
+          recordAbuseEvent({
+            userPhone: msg.senderPhone,
+            chatId: msg.chatId,
+            submodule: 'permission_guard',
+            severity: 'rule_violation',
+            actionTaken: 'streakgrup_toggle_denied',
+            commandName: 'streakgrup',
+            detail: 'Non-admin mencoba toggle streak grup.',
+          });
+          return { handled: true, replyText: t.adminOnly('streakgrup'), status: 'denied' };
+        }
+        const enable = sub === 'on';
+        setGroupStreakEnabled(msg.chatId, enable);
+        return {
+          handled: true,
+          replyText: enable
+            ? `🔥 Sip! Streak grup resmi *AKTIF* di grup ini. Ajak minimal 3 anggota atau kirim 5 interaksi ke bot per hari buat nyalain apinya!`
+            : `Streak grup di grup ini dimatikan dulu oleh admin.`,
+          status: 'ok',
+        };
+      }
+
+      if (sub === 'pulihkan' || sub === 'restore') {
+        const res = restoreGroupStreak({ groupId: msg.chatId, actorPhone: msg.senderPhone, lang });
+        return { handled: true, replyText: res.message, status: res.ok ? 'ok' : 'error' };
+      }
+
+      return {
+        handled: true,
+        replyText: formatGroupStreakStatus(msg.chatId, prefix, lang),
+        status: 'ok',
+      };
     }
 
     // Info & Economy
-    if (name === 'balance' || name === 'level' || name === 'limit' || name === 'profile' || name === 'streak') {
-      const u = db.prepare('SELECT display_name, balance, exp, level, daily_limit, used_today, streak, is_premium FROM users WHERE phone = ?').get(msg.senderPhone) as {
-        display_name: string; balance: number; exp: number; level: number; daily_limit: number; used_today: number; streak: number; is_premium: number;
-      };
+    if (name === 'balance' || name === 'level' || name === 'limit' || name === 'profile' || name === 'cekpremium') {
+      const u = ensureUserRecord(msg.senderPhone, msg.senderName);
+      const premValid = isUserPremiumValid(u);
       return {
         handled: true,
-        replyText: `Profil ${u.display_name}:\n- Balance Virtual: ${u.balance}\n- EXP: ${u.exp} (Level ${u.level})\n- Sisa Limit: ${Math.max(0, u.daily_limit - u.used_today)}/${u.daily_limit}\n- Streak: ${u.streak} hari\n- Premium: ${u.is_premium ? 'Aktif' : 'Standar'}`,
+        replyText:
+          lang === 'en'
+            ? `Profile of ${u.display_name}:\n• Virtual Balance: ${u.balance}\n• EXP: ${u.exp} (Level ${u.level})\n• Limit: ${premValid ? 'Unlimited (Premium)' : u.daily_limit}\n• Premium: ${premValid ? 'Active' : 'Standard'}`
+            : `Profil ${u.display_name}:\n• Balance Virtual: ${u.balance}\n• EXP: ${u.exp} (Level ${u.level})\n• Sisa Limit: ${premValid ? 'Unlimited (Premium)' : u.daily_limit}\n• Status: ${premValid ? 'Premium Aktif' : 'User Umum'}`,
         status: 'ok',
       };
     }
 
     if (name === 'topglobal' || name === 'toplocal') {
-      const top = db.prepare('SELECT display_name, exp, level, balance FROM users ORDER BY exp DESC LIMIT 5').all() as Array<{ display_name: string; exp: number; level: number; balance: number }>;
-      return {
-        handled: true,
-        replyText: `Papan Peringkat (${name}):\n${top.map((t, i) => `${i + 1}. ${t.display_name} — Lv.${t.level} (${t.exp} EXP, ${t.balance} Bal)`).join('\n')}`,
-        status: 'ok',
-      };
+      if (name === 'toplocal' && msg.chatScope !== 'group') {
+        return {
+          handled: true,
+          replyText:
+            lang === 'en'
+              ? `Use ${prefix}toplocal inside a group chat, or try ${prefix}topglobal here!`
+              : `Ketik ${prefix}toplocal di dalam grup ya biar ranking anggotanya akurat. Di chat pribadi pakai ${prefix}topglobal aja!`,
+          status: 'error',
+        };
+      }
+      const boardText = formatLeaderboardMessage({
+        scope: name === 'toplocal' ? 'local' : 'global',
+        groupId: msg.chatId,
+        groupName: msg.groupName,
+        requesterPhone: msg.senderPhone,
+        lang,
+      });
+      return { handled: true, replyText: boardText, status: 'ok' };
     }
 
     if (name === 'kodebahasa') {
-      return { handled: true, replyText: 'Kode bahasa didukung: id (Indonesia - Utama), en (English), ja (日本語).', status: 'ok' };
+      return { handled: true, replyText: 'Kode bahasa didukung: id (Indonesia - Santai), en (English), ja (日本語).', status: 'ok' };
     }
 
     if (name === 'infounsur') {
@@ -1011,20 +1524,411 @@ class WhatsAppEngineManager {
       }
     }
 
-    if (name === 'buylimit') {
-      const qty = Math.min(20, Math.max(1, Number.parseInt(args[0] || '1', 10) || 1));
-      const cost = qty * 20;
-      try {
-        db.transaction(() => {
-          const sender = db.prepare('SELECT balance FROM users WHERE phone = ?').get(msg.senderPhone) as { balance: number };
-          if (!sender || sender.balance < cost) throw new Error(`Balance tidak cukup (butuh ${cost} Balance).`);
-          applyUserBalanceAndExp(msg.senderPhone, msg.senderName, -cost, 2, `Beli ${qty} limit`);
-          db.prepare('UPDATE users SET daily_limit = daily_limit + ? WHERE phone = ?').run(qty, msg.senderPhone);
-        })();
-        return { handled: true, replyText: `Berhasil membeli +${qty} limit command dengan ${cost} Balance virtual.`, status: 'ok' };
-      } catch (err) {
-        return { handled: true, replyText: err instanceof Error ? err.message : 'Gagal membeli limit.', status: 'error' };
+    if (name === 'addlimit' || name === 'buylimit') {
+      if (args.length === 0) {
+        return {
+          handled: true,
+          replyText:
+            lang === 'en'
+              ? `Usage:\n• ${prefix}addlimit <amount> (for yourself)\n• ${prefix}addlimit <phone> <amount> (gift to someone)\n• Reply to a user's message with ${prefix}addlimit <amount>`
+              : `Cara pakai ${prefix}${name}:\n• ${prefix}${name} <jumlah> (beli buat sendiri)\n• ${prefix}${name} <nomor> <jumlah> (kirim ke teman)\n• Balas pesan teman lalu ketik ${prefix}${name} <jumlah>`,
+          status: 'error',
+        };
       }
+
+      let mode: 'self' | 'phone' | 'reply' = 'self';
+      let targetRaw: string | undefined;
+      let amount = 0;
+
+      if (args.length >= 2) {
+        mode = 'phone';
+        targetRaw = args[0];
+        amount = Number(args[1]);
+      } else if (msg.quotedSenderPhone || msg.mentions?.[0]) {
+        mode = msg.quotedSenderPhone ? 'reply' : 'phone';
+        targetRaw = msg.quotedSenderPhone || msg.mentions?.[0];
+        amount = Number(args[0]);
+      } else {
+        mode = 'self';
+        amount = Number(args[0]);
+      }
+
+      if (!Number.isInteger(amount) || amount <= 0) {
+        recordAbuseEvent({
+          userPhone: msg.senderPhone,
+          chatId: msg.chatId,
+          submodule: amount <= 0 ? 'anti_exploit' : 'audit_monitoring',
+          severity: amount <= 0 ? 'suspicious' : 'user_error',
+          actionTaken: 'rejected_addlimit_amount',
+          commandName: name,
+          detail: `Input jumlah tidak valid pada ${name}: "${rawArgs}"`,
+        });
+      }
+
+      const res = executeAddLimit({
+        actorPhone: msg.senderPhone,
+        actorName: msg.senderName,
+        mode,
+        targetPhoneRaw: targetRaw,
+        amount,
+        prefix,
+        lang,
+        idempotencyKey: msg.messageId ? `addlimit-${msg.messageId}` : undefined,
+      });
+
+      return { handled: true, replyText: res.message, status: res.ok ? 'ok' : 'error' };
+    }
+
+    // Brat stickers (#brat2, #bratbahlil, #bratspongebob / #bratspgbb)
+    if (name === 'brat2' || name === 'bratbahlil' || name === 'bratspongebob') {
+      const art = await generateBratSticker({
+        variant: name,
+        text: rawArgs,
+        lang,
+      });
+      if (!art.ok) {
+        return { handled: true, replyText: art.caption, status: 'error' };
+      }
+      if (art.buffer) {
+        this.mediaOutbox.set(`${msg.chatId}:${msg.senderPhone}`, {
+          kind: 'sticker',
+          mimetype: art.mimetype || 'image/webp',
+          buffer: art.buffer,
+          caption: art.caption,
+        });
+      }
+      return {
+        handled: true,
+        replyText: art.caption,
+        mediaPreview: { kind: art.kind, mimetype: art.mimetype || 'image/webp', dataUrl: art.dataUrl, caption: art.caption },
+        status: 'ok',
+      };
+    }
+
+    // Visual Mockup Images (clearly watermarked [SIMULASI])
+    if (
+      [
+        'fakeml',
+        'tiktokqc',
+        'iqcpink',
+        'iqcdark',
+        'iqcimage',
+        'fakestoryig',
+        'fakechios',
+        'fakecall',
+        'fakegc',
+        'faketweet',
+        'fakedana',
+        'fakebca',
+        'fakeovo',
+      ].includes(name)
+    ) {
+      if (args[0]?.toLowerCase() === 'help') {
+        return {
+          handled: true,
+          replyText: `Contoh pakai *${prefix}${name}*:\n${cmd.example}\n(Semua hasil otomatis diberi label [SIMULASI]).`,
+          status: 'ok',
+        };
+      }
+      const attachedImg =
+        msg.attachedImageBase64 ||
+        (msg.quotedMediaBuffer && msg.quotedMediaKind === 'image'
+          ? `data:image/png;base64,${msg.quotedMediaBuffer.toString('base64')}`
+          : undefined);
+      const art = await generateMockupImage({
+        type: name as any,
+        rawArgs,
+        senderName: msg.senderName,
+        attachedImageBase64: attachedImg,
+        lang,
+      });
+      if (art.buffer) {
+        this.mediaOutbox.set(`${msg.chatId}:${msg.senderPhone}`, {
+          kind: 'image',
+          mimetype: art.mimetype || 'image/png',
+          buffer: art.buffer,
+          caption: art.caption,
+        });
+      }
+      return {
+        handled: true,
+        replyText: art.caption,
+        mediaPreview: { kind: art.kind, mimetype: art.mimetype || 'image/png', dataUrl: art.dataUrl, caption: art.caption },
+        status: 'ok',
+      };
+    }
+
+    // Honest Media & Channel Tools
+    if (name === 'spotifycard') {
+      const art = await generateSpotifyCard(rawArgs, lang);
+      if (art.ok && art.buffer) {
+        this.mediaOutbox.set(`${msg.chatId}:${msg.senderPhone}`, {
+          kind: 'image',
+          mimetype: art.mimetype || 'image/png',
+          buffer: art.buffer,
+          caption: art.caption,
+        });
+      }
+      return {
+        handled: true,
+        replyText: art.caption,
+        mediaPreview: art.dataUrl ? { kind: art.kind, mimetype: art.mimetype || 'image/png', dataUrl: art.dataUrl, caption: art.caption } : undefined,
+        status: art.ok ? 'ok' : 'error',
+      };
+    }
+
+    if (name === 'toimg') {
+      const art = await convertStickerToImage(msg.quotedMediaBuffer);
+      if (art.ok && art.buffer) {
+        this.mediaOutbox.set(`${msg.chatId}:${msg.senderPhone}`, {
+          kind: 'image',
+          mimetype: art.mimetype || 'image/png',
+          buffer: art.buffer,
+          caption: art.caption,
+        });
+      }
+      return {
+        handled: true,
+        replyText: art.caption,
+        mediaPreview: art.dataUrl ? { kind: art.kind, mimetype: art.mimetype || 'image/png', dataUrl: art.dataUrl, caption: art.caption } : undefined,
+        status: art.ok ? 'ok' : 'error',
+      };
+    }
+
+    if (name === 'tolive') {
+      const art = await convertMediaToLivePhotoBundle({
+        mediaBuffer: msg.quotedMediaBuffer,
+        mediaKind: msg.quotedMediaKind,
+        userPhone: msg.senderPhone,
+        lang,
+      });
+      if (art.ok && art.livePhotoBundle) {
+        if (msg.source === 'simulator' && art.jobId) {
+          updateMediaJobDelivery(art.jobId, 'simulator_preview', 'rendered');
+        }
+        this.mediaOutbox.set(`${msg.chatId}:${msg.senderPhone}`, {
+          kind: 'motion_photo',
+          mimetype: 'image/jpeg',
+          buffer: art.livePhotoBundle.motionPhotoJpgBuffer,
+          caption: art.caption,
+          jobId: art.jobId,
+          livePhotoBundle: art.livePhotoBundle,
+        });
+      }
+      return {
+        handled: true,
+        replyText: art.caption,
+        mediaPreview: art.livePhotoBundle
+          ? {
+              kind: 'motion_photo',
+              mimetype: 'image/jpeg',
+              dataUrl: art.livePhotoBundle.motionPhotoJpgDataUrl,
+              stillDataUrl: art.livePhotoBundle.stillDataUrl,
+              motionVideoDataUrl: art.livePhotoBundle.motionVideoDataUrl,
+              motionPhotoJpgDataUrl: art.livePhotoBundle.motionPhotoJpgDataUrl,
+              jobId: art.jobId,
+              validation: art.livePhotoBundle.validation,
+              caption: art.caption,
+            }
+          : undefined,
+        status: art.ok ? 'ok' : 'error',
+      };
+    }
+
+    if (name === 'stickeraudio') {
+      const pairKey = `${msg.chatId}:${msg.senderPhone}`;
+      const now = Date.now();
+      for (const [k, v] of this.pendingStickerAudioVisual.entries()) {
+        if (v.expiresAt < now) this.pendingStickerAudioVisual.delete(k);
+      }
+
+      const attachedAudioBuf = msg.attachedAudioBase64
+        ? Buffer.from(msg.attachedAudioBase64.replace(/^data:[^;]+;base64,/, ''), 'base64')
+        : undefined;
+
+      // Case 1: Replying to audio after storing an image/sticker
+      if (msg.quotedMediaKind === 'audio' && msg.quotedMediaBuffer) {
+        const staged = this.pendingStickerAudioVisual.get(pairKey);
+        if (!staged || staged.expiresAt < now) {
+          return {
+            handled: true,
+            replyText:
+              lang === 'en'
+                ? 'Reply to a sticker or image with .sa first, then reply to the audio/voice note with .sa (within 5 minutes)!'
+                : 'Kirim atau balas stiker/gambar pakai #sa dulu ya (untuk nyimpan visualnya), baru balas audio/VN pakai #sa buat digabungin!',
+            status: 'error',
+          };
+        }
+        this.pendingStickerAudioVisual.delete(pairKey);
+        const art = await convertStickerAudioBundle({
+          visualBuffer: staged.buffer,
+          visualKind: staged.kind,
+          audioBuffer: msg.quotedMediaBuffer,
+          userPhone: msg.senderPhone,
+          lang,
+        });
+        if (art.ok && art.soundStickerBundle) {
+          if (msg.source === 'simulator' && art.jobId) {
+            updateMediaJobDelivery(art.jobId, 'simulator_preview', 'rendered');
+          }
+          this.mediaOutbox.set(pairKey, {
+            kind: 'sound_sticker',
+            mimetype: 'image/webp',
+            buffer: art.soundStickerBundle.stickerBuffer,
+            caption: art.caption,
+            jobId: art.jobId,
+            soundStickerBundle: art.soundStickerBundle,
+          });
+        }
+        return {
+          handled: true,
+          replyText: art.caption,
+          mediaPreview: art.soundStickerBundle
+            ? {
+                kind: 'sound_sticker',
+                mimetype: 'image/webp',
+                dataUrl: art.soundStickerBundle.stickerDataUrl,
+                audioDataUrl: art.soundStickerBundle.audioDataUrl,
+                waveform: art.soundStickerBundle.waveform,
+                jobId: art.jobId,
+                validation: {
+                  webp: art.soundStickerBundle.webpValidation,
+                  audio: art.soundStickerBundle.audioValidation,
+                },
+                caption: art.caption,
+              }
+            : undefined,
+          status: art.ok ? 'ok' : 'error',
+        };
+      }
+
+      // Case 2: Replying to static image or sticker without audio yet -> stage it for 2-step pairing
+      if ((msg.quotedMediaKind === 'image' || msg.quotedMediaKind === 'sticker') && msg.quotedMediaBuffer && !attachedAudioBuf) {
+        this.pendingStickerAudioVisual.set(pairKey, {
+          kind: msg.quotedMediaKind,
+          buffer: msg.quotedMediaBuffer,
+          expiresAt: now + 5 * 60_000,
+        });
+        // Allow immediate step-2 reply to audio without hitting the 3s command cooldown
+        this.cooldownMap.delete(`${msg.senderPhone}:stickeraudio`);
+        return {
+          handled: true,
+          replyText:
+            lang === 'en'
+              ? `Visual (${msg.quotedMediaKind}) saved for 5 minutes! Now reply to an audio/voice note with ${prefix}sa to combine them into a Sound Sticker.`
+              : `Oke, visual (${msg.quotedMediaKind}) sudah disimpan selama 5 menit! Sekarang balas pesan audio atau voice note pakai ${prefix}sa biar digabung jadi stiker bersuara.`,
+          status: 'pending',
+        };
+      }
+
+      // Case 3: Replying to video (extract audio+video) OR image/sticker + direct attachedAudioBuf
+      const art = await convertStickerAudioBundle({
+        visualBuffer: msg.quotedMediaBuffer,
+        visualKind: msg.quotedMediaKind,
+        audioBuffer: attachedAudioBuf,
+        userPhone: msg.senderPhone,
+        lang,
+      });
+      if (art.ok && art.soundStickerBundle) {
+        if (msg.source === 'simulator' && art.jobId) {
+          updateMediaJobDelivery(art.jobId, 'simulator_preview', 'rendered');
+        }
+        this.mediaOutbox.set(pairKey, {
+          kind: 'sound_sticker',
+          mimetype: 'image/webp',
+          buffer: art.soundStickerBundle.stickerBuffer,
+          caption: art.caption,
+          jobId: art.jobId,
+          soundStickerBundle: art.soundStickerBundle,
+        });
+      }
+      return {
+        handled: true,
+        replyText: art.caption,
+        mediaPreview: art.soundStickerBundle
+          ? {
+              kind: 'sound_sticker',
+              mimetype: 'image/webp',
+              dataUrl: art.soundStickerBundle.stickerDataUrl,
+              audioDataUrl: art.soundStickerBundle.audioDataUrl,
+              waveform: art.soundStickerBundle.waveform,
+              jobId: art.jobId,
+              validation: {
+                webp: art.soundStickerBundle.webpValidation,
+                audio: art.soundStickerBundle.audioValidation,
+              },
+              caption: art.caption,
+            }
+          : undefined,
+        status: art.ok ? 'ok' : 'error',
+      };
+    }
+
+    if (name === 'upswch') {
+      const targetCh = args[0] || '';
+      const contentText = args.slice(1).join(' ').trim();
+      if (!targetCh || !contentText) {
+        return {
+          handled: true,
+          replyText: `Formatnya: ${prefix}upswch <id@newsletter|link_saluran> <teks pengumuman>`,
+          status: 'error',
+        };
+      }
+      if (!this.sock || this.status !== 'connected') {
+        return {
+          handled: true,
+          replyText: 'WhatsApp Engine lagi belum terhubung (disconnected), jadi pesan ke Saluran WhatsApp belum bisa dikirim secara nyata.',
+          status: 'error',
+        };
+      }
+      try {
+        let newsletterJid = targetCh;
+        const inviteMatch = targetCh.match(/whatsapp\.com\/channel\/([A-Za-z0-9]+)/i);
+        if (inviteMatch && typeof (this.sock as any).newsletterMetadata === 'function') {
+          const meta = await (this.sock as any).newsletterMetadata('invite', inviteMatch[1]);
+          if (meta?.id) newsletterJid = meta.id;
+        }
+        if (!isJidNewsletter(newsletterJid) && !newsletterJid.endsWith('@newsletter')) {
+          return {
+            handled: true,
+            replyText: 'ID atau tautan saluran belum valid (@newsletter tidak ditemukan). Pastikan bot sudah jadi admin saluran tersebut.',
+            status: 'error',
+          };
+        }
+        await this.sock.sendMessage(newsletterJid, { text: contentText });
+        addAuditLog(msg.senderPhone, 'owner.upswch', newsletterJid, { len: contentText.length });
+        return { handled: true, replyText: `Pesan berhasil dikirim ke Saluran ${newsletterJid}!`, status: 'ok' };
+      } catch (err) {
+        return {
+          handled: true,
+          replyText: `Gagal kirim ke Saluran WhatsApp: ${err instanceof Error ? err.message : 'Akun tidak punya izin admin saluran atau tidak didukung sesi ini.'}`,
+          status: 'error',
+        };
+      }
+    }
+
+    if (name === 'setbio') {
+      if (!rawArgs) {
+        return {
+          handled: true,
+          replyText: `Mau ganti bio bot? Ketik aja ${prefix}setbio <teks bio baru>, misalnya: ${prefix}setbio Freya-san bot siap bantu kamu!`,
+          status: 'error',
+        };
+      }
+      if (this.sock && this.status === 'connected') {
+        try {
+          await this.sock.updateProfileStatus(rawArgs.slice(0, 139));
+          addAuditLog(msg.senderPhone, 'owner.setbio', rawArgs.slice(0, 80));
+          return { handled: true, replyText: `Bio WhatsApp bot berhasil diperbarui jadi: "${rawArgs.slice(0, 139)}"`, status: 'ok' };
+        } catch (err) {
+          return { handled: true, replyText: `Gagal ubah bio WhatsApp: ${err instanceof Error ? err.message : 'error'}`, status: 'error' };
+        }
+      }
+      return {
+        handled: true,
+        replyText: 'WhatsApp Engine sedang offline, jadi bio profil belum bisa di-push ke server WhatsApp.',
+        status: 'pending',
+      };
     }
 
     // Tools: Folio & Text utilities
@@ -1085,14 +1989,7 @@ class WhatsAppEngineManager {
       return { handled: true, replyText: `Sumber pesan terdeteksi: ${msg.source === 'simulator' ? 'Web Console Simulator' : 'WhatsApp Client'} (${msg.chatScope}).`, status: 'ok' };
     }
     if (name === 'readviewonce') {
-      return { handled: true, replyText: 'Pembatasan Keamanan: Freya-san Hub menghormati privasi pesan sekali lihat dan tidak melewati proteksi privasi WhatsApp.', status: 'denied' };
-    }
-    if (['fakebca', 'fakedana', 'fakeovo', 'fakeml', 'fakereply', 'faketweet', 'fakestoryig', 'fakegc', 'fakecall'].includes(name)) {
-      return {
-        handled: true,
-        replyText: `[MODE SIMULASI EDUKATIF — BUKAN BUKTI TRANSAKSI NYATA]\nTemplate simulasi "${name}" dicatat untuk pratinjau UI saja. Dilarang digunakan untuk penipuan atau pemalsuan bukti transaksi.`,
-        status: 'ok',
-      };
+      return { handled: true, replyText: 'Privasi chat sekali lihat tetap dijaga oleh sistem, jadi bot nggak melewati proteksi privasi WhatsApp.', status: 'denied' };
     }
 
     if (name === 'kirim') {
@@ -1101,7 +1998,7 @@ class WhatsAppEngineManager {
       if (lower.startsWith('ke owner ')) {
         const messageText = rawArgs.slice('ke owner '.length).trim();
         addAuditLog(msg.senderPhone, 'kirim.to_owner', 'owner', { preview: messageText.slice(0, 80) });
-        return { handled: true, replyText: `Pesan untuk owner dicatat ke antrean aman (${messageText.length} karakter). Nomor privat owner tetap terlindungi.`, status: 'ok' };
+        return { handled: true, replyText: `Pesan untuk owner sudah dicatat ke antrean aman (${messageText.length} karakter). Nomor privat owner tetap aman.`, status: 'ok' };
       }
       const target = args[0]?.replace(/\D/g, '');
       const bodyText = args.slice(1).join(' ');
@@ -1356,6 +2253,18 @@ class WhatsAppEngineManager {
       return { handled: true, replyText: `Blue Tick Control WhatsApp diubah menjadi: ${next === 'true' ? 'ON' : 'OFF'}.`, status: 'ok' };
     }
 
+    // UNO stop command before normal game session routing
+    if (name === 'uno' && args[0]?.toLowerCase() === 'stop') {
+      const stopRes = stopUnoSession({
+        chatId: msg.chatId,
+        actorPhone: msg.senderPhone,
+        isOwner,
+        isGroupAdmin: Boolean(msg.isGroupAdmin),
+        lang,
+      });
+      return { handled: true, replyText: stopRes.message, status: stopRes.ok ? 'ok' : 'denied' };
+    }
+
     // Game Commands routing -> Game Session Engine
     const gameCommandMap: Record<string, string> = {
       sloth: 'sloth',
@@ -1374,6 +2283,8 @@ class WhatsAppEngineManager {
       dare: 'truthordare',
       werewolf: 'werewolf',
       werewolf2: 'werewolf',
+      undercover: 'undercover',
+      uno: 'uno',
       mafia: 'mafia',
       spyfall: 'spyfall',
       impostor: 'impostor',
@@ -1393,6 +2304,8 @@ class WhatsAppEngineManager {
       const filterArg = args[0]?.toLowerCase() ?? '';
       const difficultyLevel = ['level_1', 'level_2', 'level_3'].includes(filterArg) ? filterArg : undefined;
       const teamId = filterArg.startsWith('team_') ? filterArg : undefined;
+      const withMrWhite = name === 'undercover' && /mrwhite\s+on/i.test(rawArgs);
+      const isWw2 = Boolean(name === 'werewolf2' || (msg.text && /\bww2\b/i.test(msg.text)));
       const res = startGameSession({
         gameId: gameCommandMap[name],
         chatId: msg.chatId,
@@ -1402,8 +2315,16 @@ class WhatsAppEngineManager {
         hostName: msg.senderName,
         difficultyLevel,
         teamId,
+        lang,
+        withMrWhite,
+        isWw2,
       });
-      return { handled: true, replyText: res.announcement, status: res.ok ? 'ok' : 'error' };
+      return {
+        handled: true,
+        replyText: res.announcement,
+        privateDeliveries: res.privateDeliveries,
+        status: res.ok ? 'ok' : 'error',
+      };
     }
 
     if (name === 'hint' || name === 'nyerah') {

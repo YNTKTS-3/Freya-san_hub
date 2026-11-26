@@ -55,11 +55,14 @@ test('Inventory audit preserves all categories, spelling corrections, and pendin
   const blackpink = findCommandByNameOrAlias('blackpink');
   assert.ok(blackpink);
 
-  for (const pendingName of ['spr', 'sprx', 'topeng', 'topengx', 'fakechios']) {
+  for (const pendingName of ['spr', 'sprx', 'topeng', 'topengx']) {
     const cmd = findCommandByNameOrAlias(pendingName);
     assert.ok(cmd, `Missing ${pendingName}`);
     assert.equal(cmd.status, 'pending_specification');
   }
+  const fakeChIos = findCommandByNameOrAlias('fakechios');
+  assert.ok(fakeChIos);
+  assert.equal(fakeChIos.status, 'active');
 
   // Ensure no duplicate canonical command names in ALL_COMMANDS
   const names = ALL_COMMANDS.map((c) => c.name.toLowerCase());
@@ -216,3 +219,148 @@ test('Redeem Reward Registry excludes unimplemented handlers and validates confi
   assert.ok(findCommandByNameOrAlias('redeemreset'));
 });
 
+import {
+  buildMonthGridCells,
+  buildMonthItemsMap,
+  getNextBirthdayDate,
+  getUpcomingHighlights,
+  parseIsoDateParts,
+} from './fortyEightCalendar';
+
+test('48Group calendar highlights upcoming concert dates and recurring member birthdays accurately', () => {
+  assert.deepEqual(parseIsoDateParts('2006-02-13'), { year: 2006, month: 2, day: 13 });
+  assert.equal(parseIsoDateParts('Jadwal Mingguan Resmi'), null);
+
+  const ref = { year: 2026, month: 11, day: 23 };
+  const christyNext = getNextBirthdayDate({ year: 2005, month: 12, day: 5 }, ref);
+  assert.deepEqual(christyNext.date, { year: 2026, month: 12, day: 5 });
+  assert.equal(christyNext.daysUntil, 12);
+  assert.equal(christyNext.turningAge, 21);
+
+  const freyaNext = getNextBirthdayDate({ year: 2006, month: 2, day: 13 }, ref);
+  assert.deepEqual(freyaNext.date, { year: 2027, month: 2, day: 13 });
+  assert.equal(freyaNext.daysUntil, 82);
+
+  const sampleEvents = [
+    {
+      id: 'evt-jkt48-anniv-2026',
+      group_id: 'jkt48',
+      title: 'JKT48 15th Anniversary Milestone',
+      event_type: 'Konser / Anniversary',
+      event_date: '2026-12-17',
+      venue: 'Jakarta',
+      summary: 'Anniversary',
+      source_url: 'https://jkt48.com/',
+    },
+    {
+      id: 'evt-weekly',
+      group_id: 'jkt48',
+      title: 'Theater Reguler',
+      event_type: 'Theater',
+      event_date: 'Jadwal Mingguan Resmi',
+      venue: 'fX Sudirman',
+      summary: 'Reguler',
+      source_url: 'https://jkt48.com/',
+    },
+  ];
+  const sampleMembers = [
+    {
+      id: 'jkt48-christy',
+      name: 'Angelina Christy',
+      nickname: 'Christy',
+      group_id: 'jkt48',
+      generation: 'Generasi 7',
+      status: 'Member Aktif',
+      birth_date: '2005-12-05',
+      source_url: 'https://jkt48.com/',
+    },
+  ];
+
+  const upcoming = getUpcomingHighlights({
+    events: sampleEvents,
+    members: sampleMembers,
+    referenceDate: ref,
+    filter: 'all',
+    limit: 5,
+  });
+  assert.equal(upcoming.length, 2);
+  assert.equal(upcoming[0].kind, 'birthday');
+  assert.equal(upcoming[0].isoDate, '2026-12-05');
+  assert.equal(upcoming[1].kind, 'concert');
+  assert.equal(upcoming[1].isoDate, '2026-12-17');
+
+  const decMap = buildMonthItemsMap({
+    year: 2026,
+    month: 12,
+    events: sampleEvents,
+    members: sampleMembers,
+    referenceDate: ref,
+    filter: 'all',
+  });
+  assert.equal(decMap.get('2026-12-05')?.[0]?.kind, 'birthday');
+  assert.equal(decMap.get('2026-12-17')?.[0]?.kind, 'concert');
+
+  const grid = buildMonthGridCells(2026, 12);
+  assert.equal(grid.length % 7, 0);
+  assert.ok(grid.some((c) => c.isoDate === '2026-12-17' && c.inCurrentMonth));
+});
+
+import { botText, getJakartaDateKey, normalizeBotLang, shiftDateKey } from './botI18n';
+import { TEBAK_EMOJI_SEED, UNDERCOVER_WORD_PAIRS_SEED } from './gameContentSeed';
+
+test('v5 core: natural botI18n, Jakarta date keys, seed counts (210 Undercover & 195 Tebak Emoji), and command aliases', () => {
+  assert.equal(normalizeBotLang('ID'), 'id');
+  assert.equal(normalizeBotLang('en-US'), 'en');
+  assert.equal(normalizeBotLang('jp'), 'ja');
+  assert.equal(botText('id').botFooter, 'Freya-san bot by Pak Ujan');
+  assert.equal(botText('en').botFooter, 'Freya-san bot by Pak Ujan');
+  assert.equal(botText('ja').botFooter, 'Freya-san bot by Pak Ujan');
+
+  assert.equal(shiftDateKey('2026-03-01', -1), '2026-02-28');
+  assert.match(getJakartaDateKey(new Date('2026-11-25T10:00:00Z')), /^\d{4}-\d{2}-\d{2}$/);
+
+  assert.equal(UNDERCOVER_WORD_PAIRS_SEED.length, 210);
+  assert.equal(TEBAK_EMOJI_SEED.length, 195);
+
+  for (const name of [
+    'streak',
+    'streakgrup',
+    'brat2',
+    'bratbahlil',
+    'bratspongebob',
+    'bratspgbb',
+    'fakeml',
+    'tiktokqc',
+    'iqcpink',
+    'iqcdark',
+    'iqcimage',
+    'fakestoryig',
+    'fakechios',
+    'fakecall',
+    'fakegc',
+    'faketweet',
+    'fakedana',
+    'fakebca',
+    'fakeovo',
+    'spotifycard',
+    'upswch',
+    'tolive',
+    'stickeraudio',
+    'sa',
+    'setbio',
+    'undercover',
+    'werewolf',
+    'werewolf2',
+    'ww2',
+    'uno',
+    'bom',
+    'tebakemoji',
+    'toplocal',
+    'topglobal',
+    'addlimit',
+  ]) {
+    const cmd = findCommandByNameOrAlias(name);
+    assert.ok(cmd, `Expected command/alias ${name} in registry`);
+    assert.equal(cmd.status, 'active', `Expected ${name} to be active`);
+  }
+});

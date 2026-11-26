@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, ChevronRight, ExternalLink, Search } from 'lucide-react';
+import { FortyEightCalendarWidget } from './FortyEightCalendarWidget';
 
 interface DifficultyLevelSummary {
   id: 'level_1' | 'level_2' | 'level_3';
@@ -46,7 +47,7 @@ interface IntelligenceData {
   generations: Array<{ id: string; group_id: string; gen_label: string; debut_year: number; notes: string; source_url: string }>;
   members: Array<{
     id: string; name: string; nickname: string; group_id: string; generation: string; status: string;
-    joined_date: string | null; graduated_date: string | null; bio: string; career_notes: string;
+    birth_date?: string | null; joined_date: string | null; graduated_date: string | null; bio: string; career_notes: string;
     source_title: string; source_url: string; retrieved_at: string;
     primary_team_id?: string | null; difficulty_level?: string | null;
   }>;
@@ -360,6 +361,12 @@ export const FortyEightCenter: React.FC = () => {
 
       {mainTab === 'intelligence' ? (
         <div className="space-y-6">
+          <FortyEightCalendarWidget
+            events={intel?.events ?? []}
+            members={intel?.members ?? []}
+            onOpenEventsTab={() => setSubModule('events')}
+          />
+
           {/* Submodules Navigation */}
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
             {[
@@ -839,6 +846,7 @@ export const FortyEightCenter: React.FC = () => {
                     <p className="text-xs text-slate-500 dark:text-slate-400">{m.career_notes}</p>
                     <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
                       <span>
+                        {m.birth_date ? `Lahir: ${m.birth_date} · ` : ''}
                         Bergabung: {m.joined_date || 'belum terverifikasi'}
                         {m.graduated_date ? ` · Lulus: ${m.graduated_date}` : ''}
                       </span>

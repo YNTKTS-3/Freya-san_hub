@@ -29,6 +29,8 @@ import {
 } from 'lucide-react';
 import { CommandAuditRow } from '../core/types';
 import { RedeemManagementPanel } from './RedeemManagementPanel';
+import { AbusePreventionPanel } from './AbusePreventionPanel';
+import { EconomyLimitPanel } from './EconomyLimitPanel';
 
 type DashboardModule =
   | 'overview'
@@ -39,7 +41,9 @@ type DashboardModule =
   | 'games_activity'
   | '48group_admin'
   | 'redeem_management'
+  | 'limits_economy'
   | 'users_redeem'
+  | 'abuse_prevention'
   | 'groups'
   | 'ai_agents'
   | 'plugins_auto'
@@ -61,7 +65,9 @@ const SIDEBAR_ITEMS: Array<{ id: DashboardModule; label: string; group: string }
   { id: 'games_activity', label: 'Game Activity & Engine', group: 'Ekosistem' },
   { id: '48group_admin', label: '48Group Management', group: 'Ekosistem' },
   { id: 'redeem_management', label: 'Redeem Management', group: 'Platform Management' },
+  { id: 'limits_economy', label: 'Limit, Economy & Game Bank', group: 'Platform Management' },
   { id: 'users_redeem', label: 'Users & Contacts', group: 'Pengguna' },
+  { id: 'abuse_prevention', label: 'User Abuse & Exploit Prevention', group: 'Pengguna' },
   { id: 'groups', label: 'Group & Anti-System', group: 'Pengguna' },
   { id: 'ai_agents', label: 'AI & Agent Center', group: 'Kecerdasan' },
   { id: 'plugins_auto', label: 'Plugins & Automation', group: 'Kecerdasan' },
@@ -88,6 +94,14 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
   const [simScope, setSimScope] = useState<'private' | 'group'>('private');
   const [simText, setSimText] = useState('.menu');
   const [simResult, setSimResult] = useState<Record<string, any> | null>(null);
+  const [mediaLabLoading, setMediaLabLoading] = useState<string | null>(null);
+  const [mediaLabError, setMediaLabError] = useState<string | null>(null);
+  const [toliveLabRes, setToliveLabRes] = useState<Record<string, any> | null>(null);
+  const [saLabRes, setSaLabRes] = useState<Record<string, any> | null>(null);
+  const [mediaJobs, setMediaJobs] = useState<Array<Record<string, any>>>([]);
+  const [customToliveBase64, setCustomToliveBase64] = useState<{ dataUrl: string; kind: 'image' | 'video'; name: string } | null>(null);
+  const [customSaVisual, setCustomSaVisual] = useState<{ dataUrl: string; name: string } | null>(null);
+  const [customSaAudio, setCustomSaAudio] = useState<{ dataUrl: string; name: string } | null>(null);
 
   // Command Manager
   const [commands, setCommands] = useState<Array<Record<string, any>>>([]);
@@ -181,8 +195,12 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
       const d = await apiFetch('/api/admin/overview');
       if (d.ok) setOverview(d);
     } else if (mod === 'whatsapp') {
-      const d = await apiFetch('/api/admin/whatsapp/status');
+      const [d, jobsRes] = await Promise.all([
+        apiFetch('/api/admin/whatsapp/status'),
+        apiFetch('/api/admin/media/jobs'),
+      ]);
       if (d.ok) setWaStatus(d.status);
+      if (jobsRes.ok) setMediaJobs(jobsRes.jobs || []);
     } else if (mod === 'commands') {
       const d = await apiFetch('/api/admin/commands');
       if (d.ok) { setCommands(d.commands); setAuditRows(d.audit); }
@@ -508,127 +526,548 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
             </div>
           )}
 
-          {/* 3. WHATSAPP CONNECTION & COMMAND SIMULATOR */}
+          {/* 3. WHATSAPP CONNECTION, SIMULATOR & MEDIA LAB (#tolive / #sa) */}
           {activeModule === 'whatsapp' && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
-                <h2 className="text-base font-bold text-slate-900 dark:text-white">Connection Manager (@whiskeysockets/baileys)</h2>
-                <div className="text-sm space-y-1 text-slate-600 dark:text-slate-300">
-                  <div>Status Koneksi: <span className="font-mono font-semibold text-blue-700 dark:text-blue-400">{waStatus?.status ?? 'disconnected'}</span></div>
-                  <div>Nomor Terhubung: <span className="font-mono">{waStatus?.phoneNumber || 'Belum tertaut'}</span></div>
-                  <div>Antrean Pesan: <span className="font-mono">{waStatus?.queueLength ?? 0}</span></div>
-                  <div>Blue Tick Control: <span className="font-mono">{waStatus?.blueTickEnabled ? 'ON' : 'OFF'}</span></div>
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">Connection Manager (@whiskeysockets/baileys)</h2>
+                  <div className="text-sm space-y-1 text-slate-600 dark:text-slate-300">
+                    <div>Status Koneksi: <span className="font-mono font-semibold text-blue-700 dark:text-blue-400">{waStatus?.status ?? 'disconnected'}</span></div>
+                    <div>Nomor Terhubung: <span className="font-mono">{waStatus?.phoneNumber || 'Belum tertaut'}</span></div>
+                    <div>Antrean Pesan: <span className="font-mono">{waStatus?.queueLength ?? 0}</span></div>
+                    <div>Blue Tick Control: <span className="font-mono">{waStatus?.blueTickEnabled ? 'ON' : 'OFF'}</span></div>
+                  </div>
+                  {waStatus?.qrDataUrl && (
+                    <div className="p-4 bg-white rounded-xl border border-slate-200 w-fit">
+                      <img src={waStatus.qrDataUrl} alt="QR Login WhatsApp" className="w-56 h-56" />
+                    </div>
+                  )}
+                  {waStatus?.lastError && (
+                    <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
+                      Catatan Koneksi: {waStatus.lastError}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await apiFetch('/api/admin/whatsapp/connect', { method: 'POST' });
+                        void loadModuleData('whatsapp');
+                      }}
+                      className="px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold"
+                    >
+                      Hubungkan / Tampilkan QR
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await apiFetch('/api/admin/whatsapp/disconnect', { method: 'POST' });
+                        void loadModuleData('whatsapp');
+                      }}
+                      className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold"
+                    >
+                      Putuskan Koneksi
+                    </button>
+                  </div>
                 </div>
-                {waStatus?.qrDataUrl && (
-                  <div className="p-4 bg-white rounded-xl border border-slate-200 w-fit">
-                    <img src={waStatus.qrDataUrl} alt="QR Login WhatsApp" className="w-56 h-56" />
+
+                <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">WhatsApp Command & Interactive Menu Tester</h2>
+                  <p className="text-xs text-slate-500">
+                    Uji seluruh 10 prefix (dengan & tanpa spasi), interactive list menu, fallback teks, Folio, dan pemisahan game Private vs Group langsung ke dispatcher bot.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSimScope('private')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${simScope === 'private' ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400' : 'border-slate-200 dark:border-slate-700'}`}
+                    >
+                      Private Chat
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSimScope('group')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${simScope === 'group' ? 'border-pink-600 bg-pink-50 dark:bg-pink-950/40 text-pink-700 dark:text-pink-400' : 'border-slate-200 dark:border-slate-700'}`}
+                    >
+                      Group Chat
+                    </button>
                   </div>
-                )}
-                {waStatus?.lastError && (
-                  <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
-                    Catatan Koneksi: {waStatus.lastError}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={simText}
+                      onChange={(e) => setSimText(e.target.value)}
+                      placeholder="Contoh: .menu atau ! ping atau .member48 Freya"
+                      className="flex-1 px-3 py-2 text-sm font-mono rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const d = await apiFetch('/api/admin/whatsapp/simulate', {
+                          method: 'POST',
+                          body: JSON.stringify({ text: simText, chatScope: simScope }),
+                        });
+                        if (d.ok) setSimResult(d.result);
+                      }}
+                      className="px-4 py-2 rounded-lg bg-blue-700 text-white text-xs font-semibold"
+                    >
+                      Kirim
+                    </button>
                   </div>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      await apiFetch('/api/admin/whatsapp/connect', { method: 'POST' });
-                      void loadModuleData('whatsapp');
-                    }}
-                    className="px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold"
-                  >
-                    Hubungkan / Tampilkan QR
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      await apiFetch('/api/admin/whatsapp/disconnect', { method: 'POST' });
-                      void loadModuleData('whatsapp');
-                    }}
-                    className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold"
-                  >
-                    Putuskan Koneksi
-                  </button>
+
+                  {simResult && (
+                    <div className="space-y-3">
+                      <div className="p-4 rounded-lg bg-slate-950 text-slate-100 text-xs font-mono whitespace-pre-wrap max-h-60 overflow-y-auto">
+                        {simResult.replyText}
+                      </div>
+                      {simResult.mediaPreview && (simResult.mediaPreview.dataUrl || simResult.mediaPreview.motionVideoDataUrl) && (
+                        <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 space-y-2">
+                          <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                            Preview Media ({simResult.mediaPreview.kind} · {simResult.mediaPreview.mimetype || simResult.mediaPreview.mime || 'image/webp'})
+                          </div>
+                          {simResult.mediaPreview.motionVideoDataUrl ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <img
+                                src={simResult.mediaPreview.stillDataUrl || simResult.mediaPreview.dataUrl}
+                                alt="Frame Still Cover"
+                                className="max-w-full rounded-lg border border-slate-200 dark:border-slate-800"
+                              />
+                              <video
+                                src={simResult.mediaPreview.motionVideoDataUrl}
+                                controls
+                                loop
+                                className="max-w-full rounded-lg border border-slate-200 dark:border-slate-800"
+                              />
+                            </div>
+                          ) : (
+                            <img
+                              src={simResult.mediaPreview.dataUrl}
+                              alt={simResult.mediaPreview.caption || 'Hasil render simulator'}
+                              className="max-w-xs rounded-lg border border-slate-200 dark:border-slate-800"
+                            />
+                          )}
+                          {simResult.mediaPreview.audioDataUrl && (
+                            <audio src={simResult.mediaPreview.audioDataUrl} controls className="w-full max-w-xs" />
+                          )}
+                        </div>
+                      )}
+                      {Array.isArray(simResult.privateDeliveries) && simResult.privateDeliveries.length > 0 && (
+                        <div className="p-3 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/30 text-xs space-y-1">
+                          <div className="font-semibold text-blue-700 dark:text-blue-300">
+                            Antrean Pengiriman Privat Bertahap ({simResult.privateDeliveries.length} pesan)
+                          </div>
+                          {simResult.privateDeliveries.map((d: any, i: number) => (
+                            <div key={i} className="font-mono text-[11px] text-slate-600 dark:text-slate-300">
+                              +{d.recipientPhone} (delay {d.delayMs}ms): {d.text.split('\n')[0]}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {simResult.interactiveMenu && (
+                        <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 space-y-2">
+                          <div className="text-xs font-bold">{simResult.interactiveMenu.title} — Interactive List</div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {simResult.interactiveMenu.sections[0]?.rows.map((r: any) => (
+                              <button
+                                key={r.id}
+                                type="button"
+                                onClick={async () => {
+                                  setSimText(r.command);
+                                  const d = await apiFetch('/api/admin/whatsapp/simulate', {
+                                    method: 'POST',
+                                    body: JSON.stringify({ text: r.command, chatScope: simScope }),
+                                  });
+                                  if (d.ok) setSimResult(d.result);
+                                }}
+                                className="p-2 text-left rounded border border-slate-200 dark:border-slate-800 hover:border-blue-600 text-xs"
+                              >
+                                <div className="font-semibold text-blue-700 dark:text-blue-400">{r.title}</div>
+                                <div className="text-slate-500 truncate">{r.description}</div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
-                <h2 className="text-base font-bold text-slate-900 dark:text-white">WhatsApp Command & Interactive Menu Tester</h2>
-                <p className="text-xs text-slate-500">
-                  Uji seluruh 10 prefix (dengan & tanpa spasi), interactive list menu, fallback teks, Folio, dan pemisahan game Private vs Group langsung ke dispatcher bot.
-                </p>
-                <div className="flex gap-2">
+              {/* MEDIA LAB: #tolive & #stickeraudio / #sa */}
+              <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                      Media Pipeline Lab (#tolive Live Photo & #sa Sound Sticker)
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Uji nyata pipeline Python + FFmpeg + validasi container (XMP MotionPhoto / WebP ANIM+EXIF+Opus) + encoding WAProto WhatsApp.
+                    </p>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setSimScope('private')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${simScope === 'private' ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400' : 'border-slate-200 dark:border-slate-700'}`}
+                    onClick={() => void loadModuleData('whatsapp')}
+                    className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold inline-flex items-center gap-1.5"
                   >
-                    Private Chat
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSimScope('group')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${simScope === 'group' ? 'border-pink-600 bg-pink-50 dark:bg-pink-950/40 text-pink-700 dark:text-pink-400' : 'border-slate-200 dark:border-slate-700'}`}
-                  >
-                    Group Chat
-                  </button>
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={simText}
-                    onChange={(e) => setSimText(e.target.value)}
-                    placeholder="Contoh: .menu atau ! ping atau .member48 Freya"
-                    className="flex-1 px-3 py-2 text-sm font-mono rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
-                  />
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const d = await apiFetch('/api/admin/whatsapp/simulate', {
-                        method: 'POST',
-                        body: JSON.stringify({ text: simText, chatScope: simScope }),
-                      });
-                      if (d.ok) setSimResult(d.result);
-                    }}
-                    className="px-4 py-2 rounded-lg bg-blue-700 text-white text-xs font-semibold"
-                  >
-                    Kirim
+                    <RefreshCw className="w-3.5 h-3.5" /> Muat Ulang Job Log
                   </button>
                 </div>
 
-                {simResult && (
-                  <div className="space-y-3">
-                    <div className="p-4 rounded-lg bg-slate-950 text-slate-100 text-xs font-mono whitespace-pre-wrap max-h-60 overflow-y-auto">
-                      {simResult.replyText}
+                {mediaLabError && (
+                  <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-300">
+                    {mediaLabError}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* #tolive tester card */}
+                  <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-bold text-slate-900 dark:text-white">#tolive — Motion / Live Photo</span>
+                      <span className="text-[11px] font-mono text-blue-700 dark:text-blue-400">JPEG+XMP+MP4 · Tag 12</span>
                     </div>
-                    {simResult.interactiveMenu && (
-                      <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 space-y-2">
-                        <div className="text-xs font-bold">{simResult.interactiveMenu.title} — Interactive List</div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                          {simResult.interactiveMenu.sections[0]?.rows.map((r: any) => (
-                            <button
-                              key={r.id}
-                              type="button"
-                              onClick={async () => {
-                                setSimText(r.command);
-                                const d = await apiFetch('/api/admin/whatsapp/simulate', {
-                                  method: 'POST',
-                                  body: JSON.stringify({ text: r.command, chatScope: simScope }),
-                                });
-                                if (d.ok) setSimResult(d.result);
-                              }}
-                              className="p-2 text-left rounded border border-slate-200 dark:border-slate-800 hover:border-blue-600 text-xs"
-                            >
-                              <div className="font-semibold text-blue-700 dark:text-blue-400">{r.title}</div>
-                              <div className="text-slate-500 truncate">{r.description}</div>
-                            </button>
-                          ))}
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={Boolean(mediaLabLoading)}
+                        onClick={async () => {
+                          setMediaLabError(null);
+                          setMediaLabLoading('tolive-image');
+                          try {
+                            const d = await apiFetch('/api/admin/media/test-tolive', {
+                              method: 'POST',
+                              body: JSON.stringify({ mode: 'image' }),
+                            });
+                            if (d.ok) {
+                              setToliveLabRes(d);
+                              if (d.jobs) setMediaJobs(d.jobs);
+                            } else {
+                              setMediaLabError(d.error || 'Gagal uji #tolive gambar.');
+                            }
+                          } finally {
+                            setMediaLabLoading(null);
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white text-xs font-semibold"
+                      >
+                        {mediaLabLoading === 'tolive-image' ? 'Memproses...' : 'Uji #tolive (Sampel Gambar)'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={Boolean(mediaLabLoading)}
+                        onClick={async () => {
+                          setMediaLabError(null);
+                          setMediaLabLoading('tolive-video');
+                          try {
+                            const d = await apiFetch('/api/admin/media/test-tolive', {
+                              method: 'POST',
+                              body: JSON.stringify({ mode: 'video' }),
+                            });
+                            if (d.ok) {
+                              setToliveLabRes(d);
+                              if (d.jobs) setMediaJobs(d.jobs);
+                            } else {
+                              setMediaLabError(d.error || 'Gagal uji #tolive video.');
+                            }
+                          } finally {
+                            setMediaLabLoading(null);
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-semibold"
+                      >
+                        {mediaLabLoading === 'tolive-video' ? 'Memproses...' : 'Uji #tolive (Sampel Video)'}
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <input
+                        type="file"
+                        accept="image/*,video/mp4,video/webm"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          if (file.size > 10 * 1024 * 1024) {
+                            setMediaLabError('Ukuran unggahan Media Lab maks 10 MB.');
+                            return;
+                          }
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            setCustomToliveBase64({
+                              dataUrl: String(reader.result || ''),
+                              kind: file.type.startsWith('video/') ? 'video' : 'image',
+                              name: file.name,
+                            });
+                          };
+                          reader.readAsDataURL(file);
+                        }}
+                        className="text-xs text-slate-600 dark:text-slate-300"
+                      />
+                      {customToliveBase64 && (
+                        <button
+                          type="button"
+                          disabled={Boolean(mediaLabLoading)}
+                          onClick={async () => {
+                            setMediaLabError(null);
+                            setMediaLabLoading('tolive-custom');
+                            try {
+                              const d = await apiFetch('/api/admin/media/test-tolive', {
+                                method: 'POST',
+                                body: JSON.stringify({
+                                  mode: customToliveBase64.kind,
+                                  mediaBase64: customToliveBase64.dataUrl,
+                                }),
+                              });
+                              if (d.ok) {
+                                setToliveLabRes(d);
+                                if (d.jobs) setMediaJobs(d.jobs);
+                              } else {
+                                setMediaLabError(d.error || 'Gagal uji unggahan #tolive.');
+                              }
+                            } finally {
+                              setMediaLabLoading(null);
+                            }
+                          }}
+                          className="px-2.5 py-1 rounded bg-emerald-700 text-white text-xs font-semibold"
+                        >
+                          Proses ({customToliveBase64.name})
+                        </button>
+                      )}
+                    </div>
+
+                    {toliveLabRes?.preview && (
+                      <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <div className="text-[11px] font-semibold text-slate-500">Still Cover (.jpg)</div>
+                            <img
+                              src={toliveLabRes.preview.stillDataUrl}
+                              alt="MotionPhoto Cover"
+                              className="w-full h-36 object-cover rounded-lg border border-slate-200 dark:border-slate-800"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="text-[11px] font-semibold text-slate-500">Motion Clip (.mp4)</div>
+                            <video
+                              src={toliveLabRes.preview.motionVideoDataUrl}
+                              controls
+                              loop
+                              muted
+                              className="w-full h-36 object-cover rounded-lg border border-slate-200 dark:border-slate-800 bg-black"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono text-slate-600 dark:text-slate-300">
+                          <div>XMP MotionPhoto: {String(toliveLabRes.preview.validation?.motionPhotoTag ?? '1')} ({String(toliveLabRes.preview.validation?.embeddedVideoCodec ?? 'h264')})</div>
+                          <div>MicroVideoOffset: {toliveLabRes.preview.validation?.microVideoOffset} B</div>
+                          <div>Container .jpg: {Math.round(toliveLabRes.preview.motionPhotoJpgBytes / 1024)} KB</div>
+                          <div>WAProto Pair: {toliveLabRes.protoCheck?.parentBytes}+{toliveLabRes.protoCheck?.childBytes} B</div>
+                        </div>
+                        <a
+                          href={toliveLabRes.preview.motionPhotoJpgDataUrl}
+                          download={`freyasan-motionphoto-${toliveLabRes.jobId || 'sample'}.jpg`}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 dark:text-blue-400 hover:underline"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Unduh MotionPhoto Android (.jpg)
+                        </a>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* #sa tester card */}
+                  <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-bold text-slate-900 dark:text-white">#sa / #stickeraudio — Sound Sticker</span>
+                      <span className="text-[11px] font-mono text-pink-700 dark:text-pink-400">WebP+EXIF + Opus · Tag 26</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={Boolean(mediaLabLoading)}
+                        onClick={async () => {
+                          setMediaLabError(null);
+                          setMediaLabLoading('sa-video');
+                          try {
+                            const d = await apiFetch('/api/admin/media/test-sa', {
+                              method: 'POST',
+                              body: JSON.stringify({ mode: 'video' }),
+                            });
+                            if (d.ok) {
+                              setSaLabRes(d);
+                              if (d.jobs) setMediaJobs(d.jobs);
+                            } else {
+                              setMediaLabError(d.error || 'Gagal uji #sa video.');
+                            }
+                          } finally {
+                            setMediaLabLoading(null);
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-pink-700 hover:bg-pink-800 disabled:opacity-50 text-white text-xs font-semibold"
+                      >
+                        {mediaLabLoading === 'sa-video' ? 'Memproses...' : 'Uji #sa (Video -> WebP+Opus)'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={Boolean(mediaLabLoading)}
+                        onClick={async () => {
+                          setMediaLabError(null);
+                          setMediaLabLoading('sa-pair');
+                          try {
+                            const d = await apiFetch('/api/admin/media/test-sa', {
+                              method: 'POST',
+                              body: JSON.stringify({ mode: 'image_audio' }),
+                            });
+                            if (d.ok) {
+                              setSaLabRes(d);
+                              if (d.jobs) setMediaJobs(d.jobs);
+                            } else {
+                              setMediaLabError(d.error || 'Gagal uji #sa gambar+audio.');
+                            }
+                          } finally {
+                            setMediaLabLoading(null);
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-semibold"
+                      >
+                        {mediaLabLoading === 'sa-pair' ? 'Memproses...' : 'Uji #sa (Gambar + Audio)'}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-xs">
+                      <label className="block space-y-1">
+                        <span className="text-[11px] text-slate-500">Visual (opsional: gambar/video)</span>
+                        <input
+                          type="file"
+                          accept="image/*,video/mp4,video/webm"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file || file.size > 10 * 1024 * 1024) return;
+                            const reader = new FileReader();
+                            reader.onload = () => setCustomSaVisual({ dataUrl: String(reader.result || ''), name: file.name });
+                            reader.readAsDataURL(file);
+                          }}
+                          className="w-full text-[11px]"
+                        />
+                      </label>
+                      <label className="block space-y-1">
+                        <span className="text-[11px] text-slate-500">Audio (opsional: mp3/ogg/wav)</span>
+                        <input
+                          type="file"
+                          accept="audio/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file || file.size > 10 * 1024 * 1024) return;
+                            const reader = new FileReader();
+                            reader.onload = () => setCustomSaAudio({ dataUrl: String(reader.result || ''), name: file.name });
+                            reader.readAsDataURL(file);
+                          }}
+                          className="w-full text-[11px]"
+                        />
+                      </label>
+                    </div>
+                    {customSaVisual && (
+                      <button
+                        type="button"
+                        disabled={Boolean(mediaLabLoading)}
+                        onClick={async () => {
+                          setMediaLabError(null);
+                          setMediaLabLoading('sa-custom');
+                          try {
+                            const isVid = customSaVisual.dataUrl.startsWith('data:video/');
+                            const d = await apiFetch('/api/admin/media/test-sa', {
+                              method: 'POST',
+                              body: JSON.stringify({
+                                mode: isVid && !customSaAudio ? 'video' : 'image_audio',
+                                visualBase64: customSaVisual.dataUrl,
+                                audioBase64: customSaAudio?.dataUrl,
+                              }),
+                            });
+                            if (d.ok) {
+                              setSaLabRes(d);
+                              if (d.jobs) setMediaJobs(d.jobs);
+                            } else {
+                              setMediaLabError(d.error || 'Gagal uji unggahan #sa.');
+                            }
+                          } finally {
+                            setMediaLabLoading(null);
+                          }
+                        }}
+                        className="px-2.5 py-1 rounded bg-emerald-700 text-white text-xs font-semibold"
+                      >
+                        Proses Unggahan ({customSaVisual.name}{customSaAudio ? ` + ${customSaAudio.name}` : ''})
+                      </button>
+                    )}
+
+                    {saLabRes?.preview && (
+                      <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
+                        <div className="flex flex-wrap items-center gap-4">
+                          <img
+                            src={saLabRes.preview.stickerDataUrl}
+                            alt="Animated WebP Sticker"
+                            className="w-28 h-28 rounded-lg border border-slate-200 dark:border-slate-800 bg-white"
+                          />
+                          <div className="flex-1 min-w-[180px] space-y-2">
+                            <div className="text-[11px] font-semibold text-slate-500">
+                              Audio OGG/Opus ({saLabRes.preview.audioSeconds}s · {Math.round(saLabRes.preview.audioBytes / 1024)} KB)
+                            </div>
+                            <audio src={saLabRes.preview.audioDataUrl} controls className="w-full h-9" />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono text-slate-600 dark:text-slate-300">
+                          <div>WebP Size: {Math.round(saLabRes.preview.stickerBytes / 1024)} KB (&lt;500KB)</div>
+                          <div>Frame ANMF: {saLabRes.preview.webpValidation?.anmfFrames} · EXIF: {String(saLabRes.preview.webpValidation?.hasWhatsAppExif)}</div>
+                          <div>Audio: {String(saLabRes.preview.audioValidation?.codec)} @ {saLabRes.preview.audioValidation?.sampleRate}Hz</div>
+                          <div>WAProto Tag 26: {saLabRes.protoCheck?.directProtoBytes} B</div>
                         </div>
                       </div>
                     )}
                   </div>
-                )}
+                </div>
+
+                {/* Honest Limitation Notice */}
+                <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200">
+                  <strong>Catatan Keterbatasan Perangkat & Socket:</strong> Pembuatan container XMP MotionPhoto, Animated WebP + EXIF, audio OGG/Opus, dan encoding protobuf WhatsApp (field 12 & field 26/134) berjalan penuh di backend. Untuk pengiriman nyata ke HP, tautkan akun WhatsApp di Connection Manager. Khusus #sa Sound Sticker, ikon pemutar suara hanya muncul pada aplikasi WhatsApp versi terbaru yang mendukung Sound Sticker (Android Beta 2.26.41.3+); versi lama akan merender stiker animasi tanpa audio.
+                </div>
+
+                {/* Recent Media Jobs Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500">
+                        <th className="py-2 pr-3">Job ID</th>
+                        <th className="py-2 pr-3">Command</th>
+                        <th className="py-2 pr-3">Input</th>
+                        <th className="py-2 pr-3">Output</th>
+                        <th className="py-2 pr-3">Ukuran</th>
+                        <th className="py-2 pr-3">Durasi</th>
+                        <th className="py-2 pr-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
+                      {mediaJobs.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-4 text-slate-500">
+                            Belum ada log eksekusi #tolive atau #sa. Klik salah satu tombol uji di atas untuk menjalankan pipeline nyata.
+                          </td>
+                        </tr>
+                      ) : (
+                        mediaJobs.map((j) => (
+                          <tr key={j.id} className="font-mono">
+                            <td className="py-2 pr-3 text-slate-600 dark:text-slate-300">{j.id}</td>
+                            <td className="py-2 pr-3 font-semibold text-blue-700 dark:text-blue-400">#{j.command}</td>
+                            <td className="py-2 pr-3">{j.input_kind}</td>
+                            <td className="py-2 pr-3">{j.output_format}</td>
+                            <td className="py-2 pr-3">{Math.round((j.bytes_out || 0) / 1024)} KB</td>
+                            <td className="py-2 pr-3">{j.duration_ms} ms</td>
+                            <td className="py-2 pr-3">
+                              <span className={j.validation_ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600'}>
+                                {j.delivery_mode}:{j.delivery_status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -1085,6 +1524,12 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
 
           {/* 8. REDEEM MANAGEMENT (Platform Management Standalone Module) */}
           {activeModule === 'redeem_management' && <RedeemManagementPanel apiFetch={apiFetch} />}
+
+          {/* 8b. LIMIT, ECONOMY & GAME BANK */}
+          {activeModule === 'limits_economy' && <EconomyLimitPanel apiFetch={apiFetch} />}
+
+          {/* 9b. USER ABUSE & EXPLOIT PREVENTION */}
+          {activeModule === 'abuse_prevention' && <AbusePreventionPanel apiFetch={apiFetch} />}
 
           {/* 9. USERS & CONTACTS */}
           {activeModule === 'users_redeem' && (

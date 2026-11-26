@@ -28,6 +28,9 @@ interface ActiveGeneralSession {
     answers?: string[];
     emojis?: string;
     winner?: string;
+    accumulatedReward?: number;
+    safeOpened?: number;
+    bombCount?: number;
   };
 }
 
@@ -333,26 +336,52 @@ export const GameCenter: React.FC = () => {
                   )}
 
                   {(activeSession.gameId === 'bom' || activeSession.gameId === 'tictactoe') && Array.isArray(activeSession.state.board) && (
-                    <div className="grid grid-cols-3 gap-2 max-w-[240px] mx-auto">
-                      {activeSession.state.board.map((cell, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          disabled={activeSession.status !== 'active'}
-                          onClick={() => handleAction(String(idx + 1))}
-                          className={`h-16 rounded-lg border text-sm font-bold font-mono transition-colors ${
-                            cell === 'BOOM'
-                              ? 'bg-rose-600 text-white border-rose-700'
-                              : cell === 'SAFE' || cell === 'X'
-                              ? 'bg-blue-700 text-white border-blue-800'
-                              : cell === 'O'
-                              ? 'bg-pink-600 text-white border-pink-700'
-                              : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-700 hover:border-blue-500'
-                          }`}
-                        >
-                          {cell || idx + 1}
-                        </button>
-                      ))}
+                    <div className="space-y-3">
+                      {activeSession.gameId === 'bom' && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs bg-slate-50 dark:bg-slate-950 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-800">
+                          <span className="font-mono tabular-nums">
+                            Akumulasi Hadiah: <strong className="text-emerald-600 dark:text-emerald-400">+{Number(activeSession.state.accumulatedReward ?? 0)} Balance</strong> · Aman: {Number(activeSession.state.safeOpened ?? 0)}/{Math.max(1, activeSession.state.board.length - Number(activeSession.state.bombCount ?? 3))}
+                          </span>
+                          {activeSession.status === 'active' && (
+                            <button
+                              type="button"
+                              onClick={() => handleAction('stop')}
+                              className="px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-800 text-white font-semibold"
+                            >
+                              Ambil Hadiah (Stop)
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      <div
+                        className={`grid gap-2 mx-auto ${
+                          activeSession.state.board.length >= 20
+                            ? 'grid-cols-5 max-w-[340px]'
+                            : activeSession.state.board.length >= 12
+                            ? 'grid-cols-4 max-w-[290px]'
+                            : 'grid-cols-3 max-w-[240px]'
+                        }`}
+                      >
+                        {activeSession.state.board.map((cell, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            disabled={activeSession.status !== 'active'}
+                            onClick={() => handleAction(String(idx + 1))}
+                            className={`h-14 rounded-lg border text-xs font-bold font-mono transition-colors ${
+                              cell === 'BOOM'
+                                ? 'bg-rose-600 text-white border-rose-700'
+                                : cell === 'SAFE' || cell === 'X'
+                                ? 'bg-blue-700 text-white border-blue-800'
+                                : cell === 'O'
+                                ? 'bg-pink-600 text-white border-pink-700'
+                                : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-700 hover:border-blue-500'
+                            }`}
+                          >
+                            {cell && cell !== '?' ? cell : idx + 1}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
 

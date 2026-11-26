@@ -22,7 +22,7 @@ import {
   verifyOwnerCredentials,
   verifySessionToken,
 } from './src/server/db';
-import { expireStaleSessions, startGameSession, submitGameAction } from './src/server/gameEngine';
+import { expireStaleSessions, getMaxQuizWrongAttempts, startGameSession, submitGameAction } from './src/server/gameEngine';
 import { whatsappEngine } from './src/server/whatsappEngine';
 import { JKT48_TEAM_GROUPS } from './src/core/jkt48Classification';
 import {
@@ -40,6 +40,27 @@ import {
   updateRedeemCode,
   updateRedeemSettings,
 } from './src/server/redeemService';
+import {
+  getAbuseDashboardState,
+  setAbuseRestrictionAction,
+  updateAbuseConfig,
+} from './src/server/abuseService';
+import {
+  getBomConfig,
+  getLimitConfig,
+  setUserPremiumStatus,
+  updateBomConfig,
+  updateLimitConfig,
+} from './src/server/economyService';
+import { getStreakSettings, setGroupStreakEnabled } from './src/server/streakService';
+import {
+  convertMediaToLivePhotoBundle,
+  convertStickerAudioBundle,
+  generateMediaPipelineSample,
+  listRecentMediaJobs,
+  updateMediaJobDelivery,
+} from './src/server/mediaService';
+import { buildMotionPhotoProtoPair, buildSoundStickerProtoPayload } from './src/server/waMediaProtocol';
 
 const PORT = Number(process.env.PORT) || 3000;
 const FILES_BASE_DIR = path.resolve(process.cwd(), 'data', 'files');
@@ -767,13 +788,33 @@ async function startServer() {
     res.json(result);
   });
 
-  app.post('/api/admin/whatsapp/simulate', async (req, res) => {
-    const { text, chatScope, chatId, groupName, senderPhone, senderName, isGroupAdmin } = req.body ?? {};
+  app.post('/api/admin/whatsapp/simulate', express.json({ limit: '15mb' }), async (req, res) => {
+    const {
+      text,
+      chatScope,
+      chatId,
+      groupName,
+      senderPhone,
+      senderName,
+      isGroupAdmin,
+      mentions,
+      quotedSenderPhone,
+      quotedMediaKind,
+      quotedMediaBase64,
+      attachedImageBase64,
+      attachedAudioBase64,
+      messageId,
+    } = req.body ?? {};
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ ok: false, error: 'Teks pesan wajib diisi.' });
     }
     const scope = chatScope === 'group' ? 'group' : 'private';
     const phone = String(senderPhone || whatsappEngine.getOwnerPhoneNormalized()).replace(/\D/g, '');
+    let quotedMediaBuffer: Buffer | undefined;
+    if (typeof quotedMediaBase64 === 'string' && quotedMediaBase64.trim()) {
+      const cleanedB64 = quotedMediaBase64.replace(/^data:[^;]+;base64,/, '');
+      quotedMediaBuffer = Buffer.from(cleanedB64, 'base64');
+    }
     const result = await whatsappEngine.processIncomingMessage({
       chatId: String(chatId || (scope === 'group' ? '1203630001@g.us' : `${phone}@s.whatsapp.net`)),
       chatScope: scope,
@@ -782,9 +823,219 @@ async function startServer() {
       senderName: String(senderName || 'Owner Simulator'),
       text,
       isGroupAdmin: Boolean(isGroupAdmin ?? true),
+      mentions: Array.isArray(mentions) ? mentions.map((m) => String(m)) : undefined,
+      quotedSenderPhone: quotedSenderPhone ? String(quotedSenderPhone) : undefined,
+      quotedMediaKind:
+        quotedMediaKind === 'sticker' ||
+        quotedMediaKind === 'image' ||
+        quotedMediaKind === 'video' ||
+        quotedMediaKind === 'audio'
+          ? quotedMediaKind
+          : undefined,
+      quotedMediaBuffer,
+      attachedImageBase64: typeof attachedImageBase64 === 'string' ? attachedImageBase64 : undefined,
+      attachedAudioBase64: typeof attachedAudioBase64 === 'string' ? attachedAudioBase64 : undefined,
+      messageId: typeof messageId === 'string' ? messageId : undefined,
       source: 'simulator',
     });
     res.json({ ok: true, result });
+  });
+
+  // Media Lab (#tolive & #sa) Real Pipeline Testing & Job Logs
+  app.get('/api/admin/media/jobs', (_req, res) => {
+    res.json({ ok: true, jobs: listRecentMediaJobs(30) });
+  });
+
+  app.post('/api/admin/media/test-tolive', express.json({ limit: '15mb' }), async (req, res) => {
+    const mode = req.body?.mode === 'image' ? 'image' : 'video';
+    const mediaBase64 = typeof req.body?.mediaBase64 === 'string' ? req.body.mediaBase64.trim() : '';
+    const mediaBuffer = mediaBase64
+      ? Buffer.from(mediaBase64.replace(/^data:[^;]+;base64,/, ''), 'base64')
+      : await generateMediaPipelineSample(mode);
+
+    const art = await convertMediaToLivePhotoBundle({
+      mediaBuffer,
+      mediaKind: mode,
+      userPhone: whatsappEngine.getOwnerPhoneNormalized(),
+      lang: 'id',
+    });
+
+    if (!art.ok || !art.livePhotoBundle) {
+      return res.status(400).json({ ok: false, error: art.caption, jobs: listRecentMediaJobs(30) });
+    }
+
+    const b = art.livePhotoBundle;
+    const stillSha = crypto.createHash('sha256').update(b.stillBuffer).digest();
+    const vidSha = crypto.createHash('sha256').update(b.motionVideoBuffer).digest();
+    const protoPair = buildMotionPhotoProtoPair({
+      jid: `${whatsappEngine.getOwnerPhoneNormalized()}@s.whatsapp.net`,
+      stillMeta: {
+        url: 'https://mmg.whatsapp.net/v/t62.7118-24/sample-still',
+        directPath: '/v/t62.7118-24/sample-still',
+        mediaKey: crypto.randomBytes(32),
+        fileSha256: stillSha,
+        fileEncSha256: stillSha,
+        fileLength: b.stillBuffer.length,
+        width: b.width,
+        height: b.height,
+        caption: art.caption,
+      },
+      videoMeta: {
+        url: 'https://mmg.whatsapp.net/v/t62.7161-24/sample-motion',
+        directPath: '/v/t62.7161-24/sample-motion',
+        mediaKey: crypto.randomBytes(32),
+        fileSha256: vidSha,
+        fileEncSha256: vidSha,
+        fileLength: b.motionVideoBuffer.length,
+        width: b.width,
+        height: b.height,
+        seconds: Math.max(1, Math.round(b.durationMs / 1000)),
+        presentationOffsetMs: b.presentationOffsetMs,
+      },
+    });
+
+    if (art.jobId) {
+      updateMediaJobDelivery(art.jobId, 'dashboard_media_lab', 'tested', {
+        protoParentBytes: protoPair.parentEncodedBytes.length,
+        protoChildBytes: protoPair.childEncodedBytes.length,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      jobId: art.jobId,
+      caption: art.caption,
+      honestLimitation: art.honestLimitation,
+      preview: {
+        stillDataUrl: b.stillDataUrl,
+        motionVideoDataUrl: b.motionVideoDataUrl,
+        motionPhotoJpgDataUrl: b.motionPhotoJpgDataUrl,
+        width: b.width,
+        height: b.height,
+        durationMs: b.durationMs,
+        presentationOffsetMs: b.presentationOffsetMs,
+        hasAudio: b.hasAudio,
+        stillBytes: b.stillBuffer.length,
+        motionVideoBytes: b.motionVideoBuffer.length,
+        motionPhotoJpgBytes: b.motionPhotoJpgBuffer.length,
+        validation: b.validation,
+      },
+      protoCheck: {
+        associationType: 12,
+        parentBytes: protoPair.parentEncodedBytes.length,
+        childBytes: protoPair.childEncodedBytes.length,
+        presentationOffsetMs: b.presentationOffsetMs,
+      },
+      jobs: listRecentMediaJobs(30),
+    });
+  });
+
+  app.post('/api/admin/media/test-sa', express.json({ limit: '15mb' }), async (req, res) => {
+    const mode = req.body?.mode === 'image_audio' ? 'image_audio' : 'video';
+    const visualBase64 = typeof req.body?.visualBase64 === 'string' ? req.body.visualBase64.trim() : '';
+    const audioBase64 = typeof req.body?.audioBase64 === 'string' ? req.body.audioBase64.trim() : '';
+
+    const visualKind: 'video' | 'image' = mode === 'image_audio' ? 'image' : 'video';
+    const visualBuffer = visualBase64
+      ? Buffer.from(visualBase64.replace(/^data:[^;]+;base64,/, ''), 'base64')
+      : await generateMediaPipelineSample(visualKind);
+    const audioBuffer = audioBase64
+      ? Buffer.from(audioBase64.replace(/^data:[^;]+;base64,/, ''), 'base64')
+      : mode === 'image_audio'
+        ? await generateMediaPipelineSample('audio')
+        : undefined;
+
+    const art = await convertStickerAudioBundle({
+      visualBuffer,
+      visualKind,
+      audioBuffer,
+      userPhone: whatsappEngine.getOwnerPhoneNormalized(),
+      lang: 'id',
+    });
+
+    if (!art.ok || !art.soundStickerBundle) {
+      return res.status(400).json({ ok: false, error: art.caption, jobs: listRecentMediaJobs(30) });
+    }
+
+    const sb = art.soundStickerBundle;
+    const stkSha = crypto.createHash('sha256').update(sb.stickerBuffer).digest();
+    const audSha = crypto.createHash('sha256').update(sb.audioBuffer).digest();
+    const directProto = buildSoundStickerProtoPayload({
+      stickerMeta: {
+        url: 'https://mmg.whatsapp.net/v/t62.15575-24/sample-sticker',
+        directPath: '/v/t62.15575-24/sample-sticker',
+        mediaKey: crypto.randomBytes(32),
+        fileSha256: stkSha,
+        fileEncSha256: stkSha,
+        fileLength: sb.stickerBuffer.length,
+        isAnimated: true,
+        emojis: '🔊',
+      },
+      audioMeta: {
+        url: 'https://mmg.whatsapp.net/v/t62.7114-24/sample-audio',
+        directPath: '/v/t62.7114-24/sample-audio',
+        mediaKey: crypto.randomBytes(32),
+        fileSha256: audSha,
+        fileEncSha256: audSha,
+        fileLength: sb.audioBuffer.length,
+        seconds: sb.audioSeconds,
+        waveform: sb.waveform,
+      },
+      wrapFutureProofEnvelope: false,
+    });
+    const wrappedProto = buildSoundStickerProtoPayload({
+      stickerMeta: {
+        url: 'https://mmg.whatsapp.net/v/t62.15575-24/sample-sticker',
+        directPath: '/v/t62.15575-24/sample-sticker',
+        mediaKey: crypto.randomBytes(32),
+        fileSha256: stkSha,
+        fileEncSha256: stkSha,
+        fileLength: sb.stickerBuffer.length,
+        isAnimated: true,
+        emojis: '🔊',
+      },
+      audioMeta: {
+        url: 'https://mmg.whatsapp.net/v/t62.7114-24/sample-audio',
+        directPath: '/v/t62.7114-24/sample-audio',
+        mediaKey: crypto.randomBytes(32),
+        fileSha256: audSha,
+        fileEncSha256: audSha,
+        fileLength: sb.audioBuffer.length,
+        seconds: sb.audioSeconds,
+        waveform: sb.waveform,
+      },
+      wrapFutureProofEnvelope: true,
+    });
+
+    if (art.jobId) {
+      updateMediaJobDelivery(art.jobId, 'dashboard_media_lab', 'tested', {
+        protoDirectBytes: directProto.encodedBytes.length,
+        protoFutureProofBytes: wrappedProto.encodedBytes.length,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      jobId: art.jobId,
+      caption: art.caption,
+      honestLimitation: art.honestLimitation,
+      preview: {
+        stickerDataUrl: sb.stickerDataUrl,
+        audioDataUrl: sb.audioDataUrl,
+        audioSeconds: sb.audioSeconds,
+        waveform: sb.waveform,
+        stickerBytes: sb.stickerBuffer.length,
+        audioBytes: sb.audioBuffer.length,
+        webpValidation: sb.webpValidation,
+        audioValidation: sb.audioValidation,
+      },
+      protoCheck: {
+        field26AudioEmbedded: true,
+        directProtoBytes: directProto.encodedBytes.length,
+        futureProofField134Bytes: wrappedProto.encodedBytes.length,
+      },
+      jobs: listRecentMediaJobs(30),
+    });
   });
 
   // Users, Groups, Redeem
@@ -796,15 +1047,15 @@ async function startServer() {
 
   app.patch('/api/admin/users/:phone', (req, res) => {
     const phone = req.params.phone.replace(/\D/g, '');
-    const { is_banned, is_premium, deltaBalance, deltaExp, daily_limit } = req.body ?? {};
+    const { is_banned, is_premium, premium_expires_at, deltaBalance, deltaExp, daily_limit } = req.body ?? {};
     if (typeof is_banned === 'boolean') {
       db.prepare('UPDATE users SET is_banned = ? WHERE phone = ?').run(is_banned ? 1 : 0, phone);
     }
     if (typeof is_premium === 'boolean') {
-      db.prepare('UPDATE users SET is_premium = ? WHERE phone = ?').run(is_premium ? 1 : 0, phone);
+      setUserPremiumStatus(phone, is_premium, typeof premium_expires_at === 'string' ? premium_expires_at : null);
     }
-    if (typeof daily_limit === 'number') {
-      db.prepare('UPDATE users SET daily_limit = ? WHERE phone = ?').run(daily_limit, phone);
+    if (typeof daily_limit === 'number' && Number.isFinite(daily_limit)) {
+      db.prepare("UPDATE users SET daily_limit = ?, updated_at = datetime('now') WHERE phone = ?").run(Math.max(0, Math.floor(daily_limit)), phone);
     }
     if (typeof deltaBalance === 'number' || typeof deltaExp === 'number') {
       applyUserBalanceAndExp(phone, phone, Number(deltaBalance || 0), Number(deltaExp || 0), 'Penyesuaian oleh owner');
@@ -1308,6 +1559,281 @@ async function startServer() {
         }
       }
     })();
+    res.json({ ok: true });
+  });
+
+  // ------------------------------------------------------------------
+  // 5b. USER ABUSE & EXPLOIT PREVENTION, LIMITS, GAMES BANK & STREAKS
+  // ------------------------------------------------------------------
+  app.get('/api/admin/abuse', (_req, res) => {
+    res.json({ ok: true, ...getAbuseDashboardState() });
+  });
+
+  app.patch('/api/admin/abuse/config', (req, res) => {
+    const updated = updateAbuseConfig(req.body ?? {});
+    addAuditLog('owner', 'abuse.config_update', 'abuse_protection', req.body);
+    res.json({ ok: true, config: updated });
+  });
+
+  app.post('/api/admin/abuse/action', (req, res) => {
+    const { userPhone, action, reason, durationMinutes } = req.body ?? {};
+    const cleaned = String(userPhone || '').replace(/\D/g, '');
+    if (!cleaned) {
+      return res.status(400).json({ ok: false, error: 'Nomor WhatsApp pengguna wajib diisi.' });
+    }
+    if (!['warn', 'temp_restrict', 'block', 'restore'].includes(String(action))) {
+      return res.status(400).json({ ok: false, error: 'Aksi tidak valid.' });
+    }
+    const result = setAbuseRestrictionAction({
+      userPhone: cleaned,
+      action,
+      reason: typeof reason === 'string' && reason.trim() ? reason.trim() : `Aksi ${action} oleh owner`,
+      durationMinutes: Number(durationMinutes || 30),
+      actor: 'owner',
+    });
+    addAuditLog('owner', `abuse.${action}`, maskPhoneNumberForGroup(cleaned), { reason, durationMinutes });
+    return res.json({ ok: true, restriction: result });
+  });
+
+  app.post('/api/admin/abuse/events/:id/resolve', (req, res) => {
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ ok: false, error: 'ID event tidak valid.' });
+    db.prepare('UPDATE abuse_events SET resolved = 1 WHERE id = ?').run(id);
+    addAuditLog('owner', 'abuse.event_resolve', String(id));
+    return res.json({ ok: true });
+  });
+
+  app.get('/api/admin/limits', (_req, res) => {
+    const config = getLimitConfig();
+    const commandCosts = db
+      .prepare(`
+        SELECT c.name, c.category, c.permission, COALESCE(cs.limit_cost, ?) AS limit_cost,
+               COALESCE(cs.free_access, 0) AS free_access
+        FROM commands c
+        LEFT JOIN command_settings cs ON cs.command_name = c.name
+        ORDER BY c.category ASC, c.name ASC
+      `)
+      .all(config.defaultCommandCost);
+    const transactions = db
+      .prepare('SELECT * FROM limit_transactions ORDER BY id DESC LIMIT 60')
+      .all();
+    res.json({ ok: true, config, commandCosts, transactions });
+  });
+
+  app.patch('/api/admin/limits/config', (req, res) => {
+    const updated = updateLimitConfig(req.body ?? {});
+    addAuditLog('owner', 'limits.config_update', 'limit_config', req.body);
+    res.json({ ok: true, config: updated });
+  });
+
+  app.patch('/api/admin/limits/commands/:name', (req, res) => {
+    const name = req.params.name.toLowerCase().trim();
+    const cost = Math.max(0, Math.min(100, Math.floor(Number(req.body?.limit_cost ?? 1))));
+    const freeAccess = Boolean(req.body?.free_access) ? 1 : 0;
+    db.prepare(`
+      INSERT INTO command_settings (command_name, limit_cost, free_access, updated_at)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(command_name) DO UPDATE SET
+        limit_cost = excluded.limit_cost,
+        free_access = excluded.free_access,
+        updated_at = datetime('now')
+    `).run(name, cost, freeAccess);
+    addAuditLog('owner', 'limits.command_cost_update', name, { cost, freeAccess });
+    res.json({ ok: true });
+  });
+
+  app.get('/api/admin/games/config', (_req, res) => {
+    const bom = getBomConfig();
+    const langRow = db.prepare("SELECT value FROM settings WHERE key = 'default_language'").get() as { value: string } | undefined;
+    const lbRow = db.prepare("SELECT value FROM settings WHERE key = 'leaderboard_limit'").get() as { value: string } | undefined;
+    res.json({
+      ok: true,
+      bom,
+      maxQuizWrongAttempts: getMaxQuizWrongAttempts(),
+      botLanguage: langRow?.value || 'id',
+      leaderboardLimit: Number(lbRow?.value || 10),
+    });
+  });
+
+  app.patch('/api/admin/games/config', (req, res) => {
+    const b = req.body ?? {};
+    const bom = b.bom ? updateBomConfig(b.bom) : getBomConfig();
+    if (typeof b.maxQuizWrongAttempts === 'number' && Number.isFinite(b.maxQuizWrongAttempts)) {
+      const clamped = Math.max(1, Math.min(20, Math.floor(b.maxQuizWrongAttempts)));
+      db.prepare(`
+        INSERT INTO settings (key, value, updated_at) VALUES ('max_quiz_wrong_attempts', ?, datetime('now'))
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+      `).run(String(clamped));
+    }
+    if (b.botLanguage === 'id' || b.botLanguage === 'en' || b.botLanguage === 'ja') {
+      db.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = 'default_language'").run(b.botLanguage);
+    }
+    if (typeof b.leaderboardLimit === 'number' && Number.isFinite(b.leaderboardLimit)) {
+      const clampedLb = Math.max(5, Math.min(50, Math.floor(b.leaderboardLimit)));
+      db.prepare(`
+        INSERT INTO settings (key, value, updated_at) VALUES ('leaderboard_limit', ?, datetime('now'))
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+      `).run(String(clampedLb));
+    }
+    addAuditLog('owner', 'games.config_update', 'game_rules', b);
+    res.json({ ok: true, bom });
+  });
+
+  app.get('/api/admin/games/undercover', (req, res) => {
+    const search = String(req.query.search || '').trim().toLowerCase();
+    const category = String(req.query.category || 'ALL').trim();
+    let rows = db.prepare('SELECT * FROM undercover_word_pairs ORDER BY id ASC').all() as Array<Record<string, unknown>>;
+    if (category && category !== 'ALL') {
+      rows = rows.filter((r) => String(r.category) === category);
+    }
+    if (search) {
+      rows = rows.filter((r) =>
+        `${r.civilian_id} ${r.undercover_id} ${r.civilian_en} ${r.undercover_en} ${r.category}`.toLowerCase().includes(search),
+      );
+    }
+    res.json({ ok: true, items: rows, total: rows.length });
+  });
+
+  app.post('/api/admin/games/undercover', (req, res) => {
+    const b = req.body ?? {};
+    const civId = String(b.civilian_id ?? b.word_a_id ?? '').trim();
+    const ucId = String(b.undercover_id ?? b.word_b_id ?? '').trim();
+    if (!civId || !ucId) {
+      return res.status(400).json({ ok: false, error: 'Kata Civil dan Kata Undercover bahasa Indonesia wajib diisi.' });
+    }
+    const id = `uc-custom-${crypto.randomBytes(4).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO undercover_word_pairs (id, category, civilian_id, undercover_id, civilian_en, undercover_en, civilian_ja, undercover_ja, enabled)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+    `).run(
+      id,
+      String(b.category || 'umum'),
+      civId,
+      ucId,
+      String(b.civilian_en || civId),
+      String(b.undercover_en || ucId),
+      String(b.civilian_ja || civId),
+      String(b.undercover_ja || ucId),
+    );
+    addAuditLog('owner', 'undercover.create', id, { civId, ucId });
+    return res.json({ ok: true, id });
+  });
+
+  app.patch('/api/admin/games/undercover/:id', (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ ok: false, error: 'ID tidak valid.' });
+    const b = req.body ?? {};
+    db.prepare(`
+      UPDATE undercover_word_pairs
+      SET enabled = COALESCE(?, enabled),
+          category = COALESCE(?, category),
+          civilian_id = COALESCE(?, civilian_id),
+          undercover_id = COALESCE(?, undercover_id)
+      WHERE id = ?
+    `).run(
+      b.enabled !== undefined ? (b.enabled ? 1 : 0) : b.active !== undefined ? (b.active ? 1 : 0) : null,
+      b.category ?? null,
+      b.civilian_id ?? b.word_a_id ?? null,
+      b.undercover_id ?? b.word_b_id ?? null,
+      id,
+    );
+    return res.json({ ok: true });
+  });
+
+  app.delete('/api/admin/games/undercover/:id', (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ ok: false, error: 'ID tidak valid.' });
+    db.prepare('DELETE FROM undercover_word_pairs WHERE id = ?').run(id);
+    addAuditLog('owner', 'undercover.delete', id);
+    return res.json({ ok: true });
+  });
+
+  app.get('/api/admin/games/tebakemoji', (req, res) => {
+    const search = String(req.query.search || '').trim().toLowerCase();
+    const category = String(req.query.category || 'ALL').trim();
+    let rows = db.prepare('SELECT * FROM tebakemoji_questions ORDER BY id ASC').all() as Array<Record<string, unknown>>;
+    if (category && category !== 'ALL') {
+      rows = rows.filter((r) => String(r.category) === category);
+    }
+    if (search) {
+      rows = rows.filter((r) => `${r.emoji_prompt} ${r.answer} ${r.category} ${r.hint}`.toLowerCase().includes(search));
+    }
+    res.json({ ok: true, items: rows, total: rows.length });
+  });
+
+  app.post('/api/admin/games/tebakemoji', (req, res) => {
+    const b = req.body ?? {};
+    const emojis = String(b.emoji_prompt ?? b.emojis ?? '').trim();
+    const answer = String(b.answer || '').trim();
+    if (!emojis || !answer) {
+      return res.status(400).json({ ok: false, error: 'Emoji dan jawaban wajib diisi.' });
+    }
+    const id = `em-custom-${crypto.randomBytes(4).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO tebakemoji_questions (id, category, emoji_prompt, answer, aliases_json, hint, enabled)
+      VALUES (?, ?, ?, ?, ?, ?, 1)
+    `).run(
+      id,
+      String(b.category || 'Umum'),
+      emojis,
+      answer,
+      JSON.stringify(Array.isArray(b.aliases) ? b.aliases : []),
+      String(b.hint || 'Tebak gabungan emoji ini!'),
+    );
+    addAuditLog('owner', 'tebakemoji.create', id, { emojis, answer });
+    return res.json({ ok: true, id });
+  });
+
+  app.patch('/api/admin/games/tebakemoji/:id', (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ ok: false, error: 'ID tidak valid.' });
+    const b = req.body ?? {};
+    db.prepare(`
+      UPDATE tebakemoji_questions
+      SET enabled = COALESCE(?, enabled),
+          category = COALESCE(?, category),
+          emoji_prompt = COALESCE(?, emoji_prompt),
+          answer = COALESCE(?, answer),
+          hint = COALESCE(?, hint)
+      WHERE id = ?
+    `).run(
+      b.enabled !== undefined ? (b.enabled ? 1 : 0) : b.active !== undefined ? (b.active ? 1 : 0) : null,
+      b.category ?? null,
+      b.emoji_prompt ?? b.emojis ?? null,
+      b.answer ?? null,
+      b.hint ?? null,
+      id,
+    );
+    return res.json({ ok: true });
+  });
+
+  app.delete('/api/admin/games/tebakemoji/:id', (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ ok: false, error: 'ID tidak valid.' });
+    db.prepare('DELETE FROM tebakemoji_questions WHERE id = ?').run(id);
+    addAuditLog('owner', 'tebakemoji.delete', id);
+    return res.json({ ok: true });
+  });
+
+  app.get('/api/admin/streaks', (_req, res) => {
+    const pairs = db.prepare('SELECT * FROM pair_streaks ORDER BY current_streak DESC, updated_at DESC LIMIT 80').all();
+    const groups = db
+      .prepare(`
+        SELECT gs.*, COALESCE(g.name, gs.group_id) AS group_name
+        FROM group_streaks gs
+        LEFT JOIN groups g ON g.id = gs.group_id
+        ORDER BY gs.current_streak DESC, gs.updated_at DESC
+        LIMIT 80
+      `)
+      .all();
+    res.json({ ok: true, settings: getStreakSettings(), pairs, groups });
+  });
+
+  app.patch('/api/admin/streaks/group/:id', (req, res) => {
+    const groupId = decodeURIComponent(req.params.id);
+    const enabled = Boolean(req.body?.enabled);
+    setGroupStreakEnabled(groupId, enabled);
+    addAuditLog('owner', 'streaks.group_toggle', groupId, { enabled });
     res.json({ ok: true });
   });
 
