@@ -66,7 +66,7 @@ export async function runNexaraAiQuery(params: {
       text: '',
       citations: [],
       latencyMs: Date.now() - started,
-      error: 'GEMINI_API_KEY belum dikonfigurasi pada Secrets server. Silakan atur GEMINI_API_KEY di panel Secrets AI Studio.',
+      error: 'GEMINI_API_KEY belum diatur di panel Secrets server nih. Tambahin GEMINI_API_KEY dulu di panel Secrets AI Studio ya.',
     };
   }
 
@@ -74,7 +74,7 @@ export async function runNexaraAiQuery(params: {
     const systemInstruction =
       params.systemPromptOverride ||
       providerRow?.system_prompt ||
-      'Anda adalah Freya-san AI (Nexara). Jawab akurat dalam Bahasa Indonesia dan sertakan sumber bila tersedia.';
+      'Kamu adalah Freya-san AI (Nexara). Jawab akurat pakai bahasa Indonesia santai yang natural dan kasih sumber kalau ada.';
 
     const response = await client.models.generateContent({
       model,
@@ -142,9 +142,9 @@ export async function researchOfficial48GroupSource(params: {
   const prompt = `Lakukan riset fakta resmi 48Group untuk grup "${params.groupId.toUpperCase()}" mengenai: "${params.query}".
 Aturan ketat:
 1. Prioritaskan situs resmi (seperti jkt48.com, akb48.co.jp, bnk48.com, mnl48.ph, dll.).
-2. Jangan mengarang nama member, generasi, tanggal debut/kelulusan, atau setlist.
-3. Jika informasi tidak ditemukan dari sumber resmi, tulis secara eksplisit "belum terverifikasi".
-4. Kembalikan ringkasan fakta dalam Bahasa Indonesia yang ringkas dan jelas.`;
+2. Jangan ngarang nama member, generasi, tanggal debut/kelulusan, atau setlist.
+3. Kalau infonya belum ketemu di sumber resmi, tulis jelas "belum terverifikasi".
+4. Balikin ringkasan fakta pakai bahasa Indonesia santai yang jelas dan gampang dibaca.`;
 
   const res = await runNexaraAiQuery({
     prompt,

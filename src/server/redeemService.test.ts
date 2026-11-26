@@ -83,11 +83,11 @@ test('Redeem Service handles full transactional lifecycle, security, rollback, a
     assert.equal(claim1.rewardsGranted?.streakBoost, 4);
     assert.ok(claim1.rewardsGranted?.badges.includes('Redeem Tester Badge'));
 
-    // Starting balance was 100 -> 300, exp 0 -> 120 (level 2) + explicit levelBonus 2 -> level 4
+    // Starting balance was 100 -> 300, exp 0 -> 120 (level 2) + explicit levelBonus 2 -> level 4, daily_limit 50 -> +10 -> 60
     assert.equal(claim1.userAfter?.balance, 300);
     assert.equal(claim1.userAfter?.exp, 120);
     assert.equal(claim1.userAfter?.level, 4);
-    assert.equal(claim1.userAfter?.dailyLimit, 35);
+    assert.equal(claim1.userAfter?.dailyLimit, 60);
     assert.equal(claim1.userAfter?.isPremium, true);
     assert.equal(claim1.userAfter?.streak, 4);
 

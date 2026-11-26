@@ -305,8 +305,9 @@ test('48Group calendar highlights upcoming concert dates and recurring member bi
   assert.ok(grid.some((c) => c.isoDate === '2026-12-17' && c.inCurrentMonth));
 });
 
-import { botText, getJakartaDateKey, normalizeBotLang, shiftDateKey } from './botI18n';
+import { botText, findFormalIndonesianViolations, getJakartaDateKey, normalizeBotLang, shiftDateKey } from './botI18n';
 import { TEBAK_EMOJI_SEED, UNDERCOVER_WORD_PAIRS_SEED } from './gameContentSeed';
+import { FOLIO_GUIDE_ID } from './folioParser';
 
 test('v5 core: natural botI18n, Jakarta date keys, seed counts (210 Undercover & 195 Tebak Emoji), and command aliases', () => {
   assert.equal(normalizeBotLang('ID'), 'id');
@@ -364,3 +365,37 @@ test('v5 core: natural botI18n, Jakarta date keys, seed counts (210 Undercover &
     assert.equal(cmd.status, 'active', `Expected ${name} to be active`);
   }
 });
+
+test('v5.0.3 standard: zero formal Indonesian markers in botI18n, commands, folio guide, and reward registry', () => {
+  const idCopy = botText('id');
+  for (const [key, val] of Object.entries(idCopy)) {
+    const sample =
+      typeof val === 'function'
+        ? (val as (...args: any[]) => string)('.', 'cmd', 5, 'reason')
+        : String(val);
+    assert.deepEqual(
+      findFormalIndonesianViolations(sample),
+      [],
+      `Formal Indonesian found in botText('id').${key}: ${sample}`,
+    );
+  }
+
+  for (const cmd of ALL_COMMANDS) {
+    assert.deepEqual(
+      findFormalIndonesianViolations(cmd.description),
+      [],
+      `Formal Indonesian found in command description for ${cmd.name}: ${cmd.description}`,
+    );
+  }
+
+  assert.deepEqual(findFormalIndonesianViolations(FOLIO_GUIDE_ID), []);
+
+  for (const r of REWARD_REGISTRY) {
+    assert.deepEqual(
+      findFormalIndonesianViolations(`${r.name} ${r.description}`),
+      [],
+      `Formal Indonesian found in REWARD_REGISTRY.${r.id}`,
+    );
+  }
+});
+

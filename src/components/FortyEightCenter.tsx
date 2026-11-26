@@ -516,7 +516,7 @@ export const FortyEightCenter: React.FC = () => {
 
                       {diffDetail.members.length === 0 ? (
                         <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm text-slate-500 text-center">
-                          Tidak ada member terverifikasi yang cocok dengan filter pencarian pada era ini.
+                          Nggak ada member terverifikasi yang cocok sama filter pencarian di era ini.
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

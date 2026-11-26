@@ -240,7 +240,7 @@ export const PublicPortal: React.FC<PublicPortalProps> = ({
               {commands.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-10 text-center text-slate-500">
-                    Tidak ada command yang cocok dengan filter pencarian Anda.
+                    Nggak ada command yang cocok sama filter pencarian kamu.
                   </td>
                 </tr>
               ) : (

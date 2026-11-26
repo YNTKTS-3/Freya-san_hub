@@ -91,10 +91,96 @@ import {
   restorePairStreak,
   setGroupStreakEnabled,
 } from './streakService';
+import {
+  buildBaileysListPayload,
+  buildMenuPayload,
+  formatMenuFallbackText,
+  InteractiveMenuPayload,
+  issueMenuSession,
+  recordMenuFallbackLog,
+  resolveMenuSelection,
+} from './menuService';
 
-const WA_AUTH_DIR = path.resolve(process.cwd(), 'data', 'wa-auth');
-if (!fs.existsSync(WA_AUTH_DIR)) {
-  fs.mkdirSync(WA_AUTH_DIR, { recursive: true });
+const DEFAULT_WA_AUTH_DIR = path.resolve(process.cwd(), 'data', 'wa-auth');
+if (!fs.existsSync(DEFAULT_WA_AUTH_DIR)) {
+  fs.mkdirSync(DEFAULT_WA_AUTH_DIR, { recursive: true });
+}
+
+export type WaConnectionMethod = 'qr' | 'pairing_code';
+export type WaPairingStatus =
+  | 'idle'
+  | 'waiting'
+  | 'code_ready'
+  | 'success'
+  | 'failed'
+  | 'expired'
+  | 'cancelled';
+
+export interface WaConnectionHistoryItem {
+  id: number;
+  event_type: string;
+  connection_method: string;
+  actor: string;
+  target_masked: string | null;
+  status: string;
+  detail: string;
+  created_at: string;
+}
+
+export type BaileysSocketFactory = (params: {
+  authDir: string;
+  logger: unknown;
+}) => Promise<{
+  sock: WASocket;
+  state: Awaited<ReturnType<typeof useMultiFileAuthState>>['state'];
+  saveCreds: () => Promise<void>;
+}>;
+
+export function validatePairingPhoneNumber(rawInput: string): {
+  ok: boolean;
+  normalized: string;
+  formattedDisplay: string;
+  error?: string;
+} {
+  const trimmed = String(rawInput || '').trim();
+  if (!trimmed) {
+    return {
+      ok: false,
+      normalized: '',
+      formattedDisplay: '',
+      error: 'Masukin nomor WhatsApp dulu pakai kode negara (contoh: 6281234567890).',
+    };
+  }
+  const strippedFormatting = trimmed.replace(/[\s\-().+]/g, '');
+  if (!/^\d+$/.test(strippedFormatting)) {
+    return {
+      ok: false,
+      normalized: '',
+      formattedDisplay: '',
+      error: 'Nomor WhatsApp cuma boleh berisi angka dan kode negara (contoh: 6281234567890).',
+    };
+  }
+  if (strippedFormatting.startsWith('0')) {
+    return {
+      ok: false,
+      normalized: '',
+      formattedDisplay: '',
+      error: 'Nomor harus diawali kode negara, bukan angka 0 (misal ganti 08xx jadi 628xx).',
+    };
+  }
+  if (strippedFormatting.length < 8 || strippedFormatting.length > 15) {
+    return {
+      ok: false,
+      normalized: '',
+      formattedDisplay: '',
+      error: 'Panjang nomor WhatsApp nggak valid (wajib 8–15 digit termasuk kode negara).',
+    };
+  }
+  return {
+    ok: true,
+    normalized: strippedFormatting,
+    formattedDisplay: `+${strippedFormatting}`,
+  };
 }
 
 export interface IncomingBotMessage {
@@ -116,20 +202,14 @@ export interface IncomingBotMessage {
   isStickerMessage?: boolean;
   hasAudioContext?: boolean;
   isGroupAdmin?: boolean;
+  selectedRowId?: string;
   source?: 'whatsapp' | 'simulator';
 }
 
 export interface BotDispatchResponse {
   handled: boolean;
   replyText: string;
-  interactiveMenu?: {
-    title: string;
-    subtitle: string;
-    sections: Array<{
-      title: string;
-      rows: Array<{ id: string; title: string; description: string; command: string }>;
-    }>;
-  };
+  interactiveMenu?: InteractiveMenuPayload;
   folioPreview?: ReturnType<typeof parseFolioText>;
   qrDataUrl?: string;
   mediaPreview?: {
@@ -171,6 +251,22 @@ class WhatsAppEngineManager {
   private isFlushingQueue = false;
   private cooldownMap = new Map<string, number>();
   private scheduledTimers = new Set<NodeJS.Timeout>();
+
+  // Pairing Code, Concurrency Lock, Epoch & Auth Directory Isolation
+  private authDir: string = DEFAULT_WA_AUTH_DIR;
+  private connectionMethod: WaConnectionMethod = 'qr';
+  private pairingStatus: WaPairingStatus = 'idle';
+  private pairingCode: string | null = null;
+  private pairingPhoneMasked: string | null = null;
+  private pairingRequestedAt: string | null = null;
+  private pairingExpiresAt: string | null = null;
+  private pairingError: string | null = null;
+  private pairingExpiryTimer: NodeJS.Timeout | null = null;
+  private isOperationLocked = false;
+  private currentOperationName: string | null = null;
+  private connectionEpoch = 0;
+  private customSocketFactory: BaileysSocketFactory | null = null;
+
   private mediaOutbox: Map<
     string,
     {
@@ -190,6 +286,131 @@ class WhatsAppEngineManager {
 
   public setBroadcaster(fn: EventBroadcaster): void {
     this.broadcaster = fn;
+  }
+
+  public setSocketFactoryForTests(factory: BaileysSocketFactory | null): void {
+    this.customSocketFactory = factory;
+  }
+
+  public setAuthDirForTests(dirPath: string | null): void {
+    this.authDir = dirPath ? path.resolve(dirPath) : DEFAULT_WA_AUTH_DIR;
+    if (!fs.existsSync(this.authDir)) {
+      fs.mkdirSync(this.authDir, { recursive: true });
+    }
+  }
+
+  private async createSocketWithAuth(): Promise<{
+    sock: WASocket;
+    state: Awaited<ReturnType<typeof useMultiFileAuthState>>['state'];
+    saveCreds: () => Promise<void>;
+  }> {
+    if (!fs.existsSync(this.authDir)) {
+      fs.mkdirSync(this.authDir, { recursive: true });
+    }
+    const logger = pino({ level: 'silent' });
+    if (this.customSocketFactory) {
+      return this.customSocketFactory({ authDir: this.authDir, logger });
+    }
+    const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+    const sock = makeWASocket({
+      auth: state,
+      logger,
+      browser: Browsers.ubuntu('Freya-san Hub'),
+      printQRInTerminal: false,
+      markOnlineOnConnect: false,
+    });
+    return { sock, state, saveCreds };
+  }
+
+  public hasStoredAuthCredentials(): boolean {
+    const credsPath = path.join(this.authDir, 'creds.json');
+    if (!fs.existsSync(credsPath)) return false;
+    try {
+      const raw = fs.readFileSync(credsPath, 'utf8').trim();
+      return raw.length > 2;
+    } catch {
+      return false;
+    }
+  }
+
+  private async withConnectionLock<T>(
+    opName: string,
+    fn: () => Promise<T>,
+  ): Promise<{ lockedOut: true } | { lockedOut: false; result: T }> {
+    if (this.isOperationLocked) {
+      return { lockedOut: true };
+    }
+    this.isOperationLocked = true;
+    this.currentOperationName = opName;
+    try {
+      const result = await fn();
+      return { lockedOut: false, result };
+    } finally {
+      this.isOperationLocked = false;
+      this.currentOperationName = null;
+    }
+  }
+
+  private clearPairingTimers(): void {
+    if (this.pairingExpiryTimer) {
+      clearTimeout(this.pairingExpiryTimer);
+      this.pairingExpiryTimer = null;
+    }
+  }
+
+  private clearReconnectAndScheduledTimers(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    for (const timer of this.scheduledTimers) {
+      clearTimeout(timer);
+    }
+    this.scheduledTimers.clear();
+  }
+
+  private closeCurrentSocket(): void {
+    if (this.sock) {
+      try {
+        this.sock.end(undefined);
+      } catch {
+        // ignore close errors
+      }
+      this.sock = null;
+    }
+  }
+
+  public recordConnectionEvent(params: {
+    eventType: string;
+    connectionMethod?: WaConnectionMethod;
+    actor?: string;
+    targetMasked?: string | null;
+    status: 'ok' | 'error' | 'cancelled';
+    detail: string;
+  }): void {
+    try {
+      db.prepare(`
+        INSERT INTO wa_connection_history (event_type, connection_method, actor, target_masked, status, detail)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        params.eventType,
+        params.connectionMethod ?? this.connectionMethod,
+        params.actor ?? 'owner',
+        params.targetMasked ?? null,
+        params.status,
+        params.detail,
+      );
+      this.broadcaster('wa:history', this.listConnectionHistory(30));
+    } catch {
+      // avoid throwing from logging
+    }
+  }
+
+  public listConnectionHistory(limit = 40): WaConnectionHistoryItem[] {
+    const safeLimit = Math.max(1, Math.min(200, Number(limit) || 40));
+    return db
+      .prepare(`SELECT * FROM wa_connection_history ORDER BY id DESC LIMIT ?`)
+      .all(safeLimit) as WaConnectionHistoryItem[];
   }
 
   public getOwnerPhoneNormalized(): string {
@@ -212,8 +433,18 @@ class WhatsAppEngineManager {
       .get() as { value: string } | undefined;
     return {
       status: this.status,
+      connectionMethod: this.connectionMethod,
       phoneNumber: this.phoneNumber,
       qrDataUrl: this.qrDataUrl,
+      pairingStatus: this.pairingStatus,
+      pairingCode: this.pairingCode,
+      pairingPhoneMasked: this.pairingPhoneMasked,
+      pairingRequestedAt: this.pairingRequestedAt,
+      pairingExpiresAt: this.pairingExpiresAt,
+      pairingError: this.pairingError,
+      hasStoredAuth: this.hasStoredAuthCredentials(),
+      isOperationLocked: this.isOperationLocked,
+      currentOperation: this.currentOperationName,
       lastError: this.lastError,
       reconnectAttempts: this.reconnectAttempts,
       uptimeSec: Math.floor((Date.now() - this.startedAt) / 1000),
@@ -226,77 +457,789 @@ class WhatsAppEngineManager {
   private persistSessionState(): void {
     db.prepare(`
       UPDATE bot_sessions
-      SET status = ?, phone_number = ?, qr_code = ?, last_error = ?, reconnect_attempts = ?, updated_at = datetime('now')
+      SET status = ?,
+          phone_number = ?,
+          qr_code = ?,
+          last_error = ?,
+          reconnect_attempts = ?,
+          connection_method = ?,
+          pairing_status = ?,
+          pairing_expires_at = ?,
+          updated_at = datetime('now')
       WHERE id = 'primary'
-    `).run(this.status, this.phoneNumber, this.qrDataUrl, this.lastError, this.reconnectAttempts);
+    `).run(
+      this.status,
+      this.phoneNumber,
+      this.qrDataUrl,
+      this.lastError,
+      this.reconnectAttempts,
+      this.connectionMethod,
+      this.pairingStatus,
+      this.pairingExpiresAt,
+    );
     this.broadcaster('wa:status', this.getStatus());
   }
 
-  public async connect(): Promise<{ ok: boolean; status: string; message: string }> {
-    if (this.status === 'connecting' || this.status === 'connected') {
-      return { ok: true, status: this.status, message: 'WhatsApp engine sudah berjalan.' };
+  private async startSocketSessionLocked(params: {
+    method: WaConnectionMethod;
+    phoneDigits?: string;
+    actor: string;
+    isAutoReconnect?: boolean;
+  }): Promise<{
+    ok: boolean;
+    status: string;
+    method: WaConnectionMethod;
+    pairingStatus?: WaPairingStatus;
+    pairingCode?: string;
+    message: string;
+    waitPromise?: Promise<void>;
+  }> {
+    const method = params.method;
+    const actor = params.actor || 'owner';
+
+    installWhatsAppV5ProtoExtensions();
+
+    const { sock, state, saveCreds } = await this.createSocketWithAuth();
+
+    if (method === 'pairing_code' && state?.creds?.registered) {
+      try {
+        sock.end(undefined);
+      } catch {
+        // ignore
+      }
+      this.pairingStatus = 'failed';
+      this.pairingCode = null;
+      this.pairingError = 'Sesi lama udah terdaftar di folder auth. Pakai Reset Sesi Penuh dulu kalau mau tautin nomor baru pakai Pairing Code.';
+      this.persistSessionState();
+      this.recordConnectionEvent({
+        eventType: 'pairing_failed',
+        connectionMethod: 'pairing_code',
+        actor,
+        targetMasked: params.phoneDigits ? maskPhoneNumberForGroup(params.phoneDigits) : null,
+        status: 'error',
+        detail: 'Ditolak karena kredensial sesi lama masih terdaftar.',
+      });
+      return {
+        ok: false,
+        status: this.status,
+        method,
+        pairingStatus: 'failed',
+        message: this.pairingError,
+      };
     }
 
-    try {
-      installWhatsAppV5ProtoExtensions();
-      this.status = 'connecting';
-      this.lastError = null;
-      this.persistSessionState();
+    this.clearReconnectAndScheduledTimers();
+    this.clearPairingTimers();
+    this.closeCurrentSocket();
 
-      const { state, saveCreds } = await useMultiFileAuthState(WA_AUTH_DIR);
-      const logger = pino({ level: 'silent' });
+    this.connectionEpoch += 1;
+    const epoch = this.connectionEpoch;
 
-      this.sock = makeWASocket({
-        auth: state,
-        logger,
-        browser: Browsers.ubuntu('Freya-san Hub'),
-        printQRInTerminal: false,
-        markOnlineOnConnect: false,
-      });
+    this.sock = sock;
+    this.connectionMethod = method;
+    this.status = 'connecting';
+    this.lastError = null;
+    this.qrDataUrl = null;
 
-      this.sock.ev.on('creds.update', saveCreds);
+    if (method === 'pairing_code') {
+      this.pairingStatus = 'waiting';
+      this.pairingCode = null;
+      this.pairingPhoneMasked = params.phoneDigits ? maskPhoneNumberForGroup(params.phoneDigits) : null;
+      this.pairingRequestedAt = new Date().toISOString();
+      this.pairingExpiresAt = null;
+      this.pairingError = null;
+    } else {
+      this.pairingStatus = 'idle';
+      this.pairingCode = null;
+      this.pairingPhoneMasked = null;
+      this.pairingRequestedAt = null;
+      this.pairingExpiresAt = null;
+      this.pairingError = null;
+    }
 
-      this.sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
+    this.persistSessionState();
+    this.recordConnectionEvent({
+      eventType: params.isAutoReconnect
+        ? 'reconnect_attempt'
+        : method === 'pairing_code'
+          ? 'connect_pairing'
+          : 'connect_qr',
+      connectionMethod: method,
+      actor,
+      targetMasked: this.pairingPhoneMasked,
+      status: 'ok',
+      detail:
+        method === 'pairing_code'
+          ? `Memulai koneksi Baileys lewat Pairing Code buat ${this.pairingPhoneMasked}.`
+          : params.isAutoReconnect
+            ? `Mencoba reconnect otomatis #${this.reconnectAttempts}.`
+            : 'Memulai koneksi Baileys lewat QR Code.',
+    });
 
-        if (qr) {
+    let pairingIssuedInEpoch = false;
+    let resolveWait: (() => void) | null = null;
+    const waitPromise = new Promise<void>((resolve) => {
+      resolveWait = resolve;
+    });
+    const finishWait = () => {
+      if (resolveWait) {
+        const fn = resolveWait;
+        resolveWait = null;
+        fn();
+      }
+    };
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', async (update) => {
+      if (epoch !== this.connectionEpoch) return;
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        if (method === 'pairing_code' && params.phoneDigits) {
+          if (!pairingIssuedInEpoch && !state?.creds?.registered) {
+            pairingIssuedInEpoch = true;
+            try {
+              const code = await sock.requestPairingCode(params.phoneDigits);
+              if (epoch !== this.connectionEpoch) return;
+              this.pairingCode = code;
+              this.pairingStatus = 'code_ready';
+              this.pairingExpiresAt = new Date(Date.now() + 160_000).toISOString();
+              this.pairingError = null;
+              this.qrDataUrl = null;
+              this.persistSessionState();
+
+              this.clearPairingTimers();
+              this.pairingExpiryTimer = setTimeout(() => {
+                if (epoch !== this.connectionEpoch) return;
+                if (this.status !== 'connected' && this.pairingStatus === 'code_ready') {
+                  this.pairingStatus = 'expired';
+                  this.pairingCode = null;
+                  this.pairingError = 'Kode pairing udah kedaluwarsa (lewat batas waktu). Minta kode pairing baru ya.';
+                  this.status = 'disconnected';
+                  this.closeCurrentSocket();
+                  this.persistSessionState();
+                  this.recordConnectionEvent({
+                    eventType: 'pairing_expired',
+                    connectionMethod: 'pairing_code',
+                    actor,
+                    targetMasked: this.pairingPhoneMasked,
+                    status: 'error',
+                    detail: 'Kode pairing kedaluwarsa sebelum dikonfirmasi di WhatsApp.',
+                  });
+                  addSystemLog('warn', 'whatsappEngine', 'Pairing code WhatsApp kedaluwarsa.');
+                }
+              }, 160_000);
+
+              this.recordConnectionEvent({
+                eventType: 'pairing_code_issued',
+                connectionMethod: 'pairing_code',
+                actor,
+                targetMasked: this.pairingPhoneMasked,
+                status: 'ok',
+                detail: 'Kode pairing berhasil dibuat dan siap dimasukin di Perangkat Tertaut WhatsApp.',
+              });
+              addSystemLog('info', 'whatsappEngine', `Pairing code siap buat ${this.pairingPhoneMasked || 'owner'}.`);
+            } catch (pairErr) {
+              if (epoch !== this.connectionEpoch) return;
+              const msgErr = pairErr instanceof Error ? pairErr.message : 'Gagal minta pairing code ke server WhatsApp.';
+              this.pairingStatus = 'failed';
+              this.pairingCode = null;
+              this.pairingError = msgErr;
+              this.lastError = msgErr;
+              this.status = 'error';
+              this.persistSessionState();
+              this.recordConnectionEvent({
+                eventType: 'pairing_failed',
+                connectionMethod: 'pairing_code',
+                actor,
+                targetMasked: this.pairingPhoneMasked,
+                status: 'error',
+                detail: `Gagal minta pairing code: ${msgErr}`,
+              });
+              addSystemLog('error', 'whatsappEngine', `Gagal pairing code: ${msgErr}`);
+            } finally {
+              finishWait();
+            }
+          }
+        } else {
           this.status = 'qr_ready';
           this.qrDataUrl = await QRCode.toDataURL(qr, { width: 280, margin: 2 });
+          if (epoch !== this.connectionEpoch) return;
           this.persistSessionState();
           addSystemLog('info', 'whatsappEngine', 'QR Code login WhatsApp siap dipindai.');
+          finishWait();
+        }
+      }
+
+      if (connection === 'open') {
+        this.clearPairingTimers();
+        this.status = 'connected';
+        this.qrDataUrl = null;
+        this.reconnectAttempts = 0;
+        this.lastError = null;
+        this.phoneNumber = sock?.user?.id?.split(':')[0] ?? null;
+
+        const wasPairing =
+          method === 'pairing_code' ||
+          this.pairingStatus === 'waiting' ||
+          this.pairingStatus === 'code_ready';
+
+        if (wasPairing) {
+          this.pairingStatus = 'success';
+          this.pairingCode = null;
+          this.pairingError = null;
+        } else {
+          this.pairingStatus = 'idle';
+          this.pairingCode = null;
         }
 
-        if (connection === 'open') {
-          this.status = 'connected';
-          this.qrDataUrl = null;
-          this.reconnectAttempts = 0;
-          this.phoneNumber = this.sock?.user?.id?.split(':')[0] ?? null;
-          db.prepare(`UPDATE bot_sessions SET last_connected_at = datetime('now') WHERE id = 'primary'`).run();
-          this.persistSessionState();
-          addSystemLog('info', 'whatsappEngine', 'WhatsApp Bot terhubung ke server WhatsApp.');
-        }
+        db.prepare(`UPDATE bot_sessions SET last_connected_at = datetime('now') WHERE id = 'primary'`).run();
+        this.persistSessionState();
+        this.recordConnectionEvent({
+          eventType: wasPairing ? 'pairing_success' : 'connect_open',
+          connectionMethod: wasPairing ? 'pairing_code' : 'qr',
+          actor,
+          targetMasked: this.phoneNumber ? maskPhoneNumberForGroup(this.phoneNumber) : this.pairingPhoneMasked,
+          status: 'ok',
+          detail: wasPairing
+            ? 'WhatsApp berhasil tertaut lewat Pairing Code.'
+            : 'WhatsApp Bot berhasil terhubung ke server WhatsApp.',
+        });
+        addSystemLog('info', 'whatsappEngine', 'WhatsApp Bot terhubung ke server WhatsApp.');
+        finishWait();
+      }
 
-        if (connection === 'close') {
-          const code = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
-          const shouldReconnect = code !== DisconnectReason.loggedOut;
-          this.status = 'disconnected';
-          this.qrDataUrl = null;
-          this.lastError = lastDisconnect?.error?.message ?? 'Koneksi WhatsApp ditutup';
-          this.persistSessionState();
+      if (connection === 'close') {
+        const code = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
+        const errMsg = lastDisconnect?.error?.message ?? 'Koneksi WhatsApp ditutup';
+        this.status = 'disconnected';
+        this.qrDataUrl = null;
+        this.lastError = errMsg;
 
-          if (shouldReconnect && this.reconnectAttempts < 5) {
-            this.reconnectAttempts += 1;
-            const delayMs = Math.min(30000, this.reconnectAttempts * 3000);
-            addSystemLog('warn', 'whatsappEngine', `Menjadwalkan reconnect #${this.reconnectAttempts} dalam ${delayMs}ms.`);
-            this.reconnectTimer = setTimeout(() => {
-              void this.connect();
-            }, delayMs);
+        const inPairingProgress = this.pairingStatus === 'waiting' || this.pairingStatus === 'code_ready';
+        if (inPairingProgress) {
+          this.clearPairingTimers();
+          if (code === DisconnectReason.timedOut) {
+            this.pairingStatus = 'expired';
+            this.pairingError = 'Waktu pairing code habis sebelum ditautkan. Minta kode baru ya.';
+            this.recordConnectionEvent({
+              eventType: 'pairing_expired',
+              connectionMethod: 'pairing_code',
+              actor,
+              targetMasked: this.pairingPhoneMasked,
+              status: 'error',
+              detail: this.pairingError,
+            });
+          } else {
+            this.pairingStatus = 'failed';
+            this.pairingError = `Koneksi putus waktu pairing (${errMsg}). Coba minta kode lagi ya.`;
+            this.recordConnectionEvent({
+              eventType: 'pairing_failed',
+              connectionMethod: 'pairing_code',
+              actor,
+              targetMasked: this.pairingPhoneMasked,
+              status: 'error',
+              detail: this.pairingError,
+            });
           }
+          this.pairingCode = null;
+          this.persistSessionState();
+          finishWait();
+          return;
         }
-      });
 
-      this.sock.ev.on('messages.upsert', async (m) => {
-        if (m.type !== 'notify') return;
+        const shouldReconnect =
+          code !== DisconnectReason.loggedOut &&
+          this.hasStoredAuthCredentials() &&
+          method === 'qr';
+        this.persistSessionState();
+
+        if (code === DisconnectReason.loggedOut) {
+          this.recordConnectionEvent({
+            eventType: 'session_logged_out',
+            connectionMethod: this.connectionMethod,
+            actor: 'whatsapp',
+            targetMasked: this.phoneNumber ? maskPhoneNumberForGroup(this.phoneNumber) : null,
+            status: 'error',
+            detail: 'Perangkat WhatsApp keluar (loggedOut). Pakai Reset Sesi Penuh atau tautin ulang.',
+          });
+        }
+
+        if (shouldReconnect && this.reconnectAttempts < 5) {
+          this.reconnectAttempts += 1;
+          const delayMs = Math.min(30000, this.reconnectAttempts * 3000);
+          addSystemLog('warn', 'whatsappEngine', `Menjadwalkan reconnect #${this.reconnectAttempts} dalam ${delayMs}ms.`);
+          this.reconnectTimer = setTimeout(() => {
+            if (epoch !== this.connectionEpoch || this.isOperationLocked) return;
+            void this.connect({ method: 'qr', actor: 'auto_reconnect', isAutoReconnect: true });
+          }, delayMs);
+        }
+        finishWait();
+      }
+    });
+
+    this.attachMessageHandlerToSocket(sock, epoch);
+
+    return {
+      ok: true,
+      status: this.status,
+      method,
+      pairingStatus: this.pairingStatus,
+      message:
+        method === 'pairing_code'
+          ? 'Lagi nyiapin pairing code WhatsApp, tunggu sebentar ya...'
+          : 'Inisialisasi koneksi QR WhatsApp dimulai.',
+      waitPromise,
+    };
+  }
+
+  public async connect(options?: {
+    method?: WaConnectionMethod;
+    phoneNumber?: string;
+    actor?: string;
+    isAutoReconnect?: boolean;
+  }): Promise<{
+    ok: boolean;
+    status: string;
+    method: WaConnectionMethod;
+    pairingStatus?: WaPairingStatus;
+    pairingCode?: string | null;
+    message: string;
+  }> {
+    const method: WaConnectionMethod = options?.method === 'pairing_code' ? 'pairing_code' : 'qr';
+    const actor = options?.actor || 'owner';
+
+    if (method === 'pairing_code') {
+      const validated = validatePairingPhoneNumber(options?.phoneNumber || '');
+      if (!validated.ok) {
+        this.pairingStatus = 'failed';
+        this.pairingCode = null;
+        this.pairingError = validated.error || 'Nomor WhatsApp nggak valid.';
+        this.persistSessionState();
+        this.recordConnectionEvent({
+          eventType: 'pairing_failed',
+          connectionMethod: 'pairing_code',
+          actor,
+          targetMasked: null,
+          status: 'error',
+          detail: this.pairingError,
+        });
+        return {
+          ok: false,
+          status: this.status,
+          method,
+          pairingStatus: 'failed',
+          message: this.pairingError,
+        };
+      }
+    }
+
+    let waitForPairingPromise: Promise<void> | undefined;
+
+    const lockedRes = await this.withConnectionLock(
+      method === 'pairing_code' ? 'connect_pairing' : 'connect_qr',
+      async () => {
+        if (this.status === 'connected' && this.sock) {
+          return {
+            ok: false,
+            status: 'connected',
+            method: this.connectionMethod,
+            pairingStatus: this.pairingStatus,
+            message: 'Akun WhatsApp udah terhubung nih, jadi sesi baru nggak dibuat.',
+          };
+        }
+
+        if (
+          this.status === 'connecting' ||
+          this.status === 'qr_ready' ||
+          this.pairingStatus === 'waiting' ||
+          this.pairingStatus === 'code_ready'
+        ) {
+          return {
+            ok: false,
+            status: this.status,
+            method: this.connectionMethod,
+            pairingStatus: this.pairingStatus,
+            pairingCode: this.pairingCode,
+            message: 'Sesi koneksi lagi jalan/menunggu otorisasi nih. Batalin dulu atau pakai Reset Koneksi kalau mau ulang.',
+          };
+        }
+
+        try {
+          const validDigits =
+            method === 'pairing_code' ? validatePairingPhoneNumber(options?.phoneNumber || '').normalized : undefined;
+          const started = await this.startSocketSessionLocked({
+            method,
+            phoneDigits: validDigits,
+            actor,
+            isAutoReconnect: options?.isAutoReconnect,
+          });
+          waitForPairingPromise = started.waitPromise;
+          if (!started.ok) {
+            return {
+              ok: false,
+              status: started.status,
+              method: started.method,
+              pairingStatus: started.pairingStatus,
+              message: started.message,
+            };
+          }
+          return {
+            ok: true,
+            status: started.status,
+            method: started.method,
+            pairingStatus: started.pairingStatus,
+            message: started.message,
+          };
+        } catch (err) {
+          this.status = 'error';
+          this.lastError = err instanceof Error ? err.message : 'Gagal menghubungkan Baileys';
+          if (method === 'pairing_code') {
+            this.pairingStatus = 'failed';
+            this.pairingCode = null;
+            this.pairingError = this.lastError;
+          }
+          this.persistSessionState();
+          this.recordConnectionEvent({
+            eventType: method === 'pairing_code' ? 'pairing_failed' : 'connect_error',
+            connectionMethod: method,
+            actor,
+            targetMasked: this.pairingPhoneMasked,
+            status: 'error',
+            detail: this.lastError,
+          });
+          addSystemLog('error', 'whatsappEngine', this.lastError);
+          return {
+            ok: false,
+            status: 'error',
+            method,
+            pairingStatus: this.pairingStatus,
+            message: this.lastError,
+          };
+        }
+      },
+    );
+
+    if (lockedRes.lockedOut) {
+      return {
+        ok: false,
+        status: this.status,
+        method,
+        pairingStatus: this.pairingStatus,
+        message: 'Proses koneksi atau reset lagi jalan nih, tunggu sebentar ya.',
+      };
+    }
+
+    const baseResult = lockedRes.result;
+    if (!baseResult.ok) return baseResult;
+
+    // Wait briefly outside the lock so fast pairing-code/QR responses appear right away in HTTP response
+    if (waitForPairingPromise) {
+      await Promise.race([
+        waitForPairingPromise,
+        new Promise<void>((resolve) => setTimeout(resolve, method === 'pairing_code' ? 1200 : 400)),
+      ]);
+    }
+
+    return {
+      ok: this.pairingStatus !== 'failed' && this.status !== 'error',
+      status: this.status,
+      method: this.connectionMethod,
+      pairingStatus: this.pairingStatus,
+      pairingCode: this.pairingCode,
+      message:
+        this.pairingStatus === 'code_ready' && this.pairingCode
+          ? 'Kode pairing berhasil dibuat! Masukin kode di menu Perangkat Tertaut WhatsApp ya.'
+          : this.pairingStatus === 'failed'
+            ? this.pairingError || 'Gagal dapetin kode pairing.'
+            : baseResult.message,
+    };
+  }
+
+  public async cancelPairing(actor = 'owner'): Promise<{
+    ok: boolean;
+    status: string;
+    pairingStatus: WaPairingStatus;
+    message: string;
+  }> {
+    const lockedRes = await this.withConnectionLock('cancel_pairing', async () => {
+      if (this.status === 'connected' && this.sock) {
+        return {
+          ok: false,
+          status: this.status,
+          pairingStatus: this.pairingStatus,
+          message: 'Akun udah terhubung nih, bukan lagi nunggu pairing.',
+        };
+      }
+      this.connectionEpoch += 1;
+      this.clearReconnectAndScheduledTimers();
+      this.clearPairingTimers();
+      this.closeCurrentSocket();
+
+      this.status = 'disconnected';
+      this.qrDataUrl = null;
+      this.pairingStatus = 'cancelled';
+      this.pairingCode = null;
+      this.pairingExpiresAt = null;
+      this.pairingError = null;
+      this.lastError = null;
+      this.reconnectAttempts = 0;
+
+      this.persistSessionState();
+      this.recordConnectionEvent({
+        eventType: 'pairing_cancelled',
+        connectionMethod: this.connectionMethod,
+        actor,
+        targetMasked: this.pairingPhoneMasked,
+        status: 'cancelled',
+        detail: 'Permintaan tautan WhatsApp dibatalin sama owner.',
+      });
+      addSystemLog('info', 'whatsappEngine', 'Proses pairing/koneksi WhatsApp dibatalin.');
+      return {
+        ok: true,
+        status: this.status,
+        pairingStatus: this.pairingStatus,
+        message: 'Proses tautan WhatsApp udah dibatalin.',
+      };
+    });
+
+    if (lockedRes.lockedOut) {
+      return {
+        ok: false,
+        status: this.status,
+        pairingStatus: this.pairingStatus,
+        message: 'Operasi koneksi lain lagi berjalan, coba sebentar lagi ya.',
+      };
+    }
+    return lockedRes.result;
+  }
+
+  public async resetConnection(actor = 'owner'): Promise<{
+    ok: boolean;
+    status: string;
+    hasStoredAuth: boolean;
+    message: string;
+  }> {
+    const lockedRes = await this.withConnectionLock('reset_connection', async () => {
+      try {
+        this.connectionEpoch += 1;
+        this.clearReconnectAndScheduledTimers();
+        this.clearPairingTimers();
+        this.closeCurrentSocket();
+
+        // Reset transient state & errors while preserving valid auth credentials
+        this.status = 'disconnected';
+        this.qrDataUrl = null;
+        this.lastError = null;
+        this.reconnectAttempts = 0;
+        this.pairingStatus = 'idle';
+        this.pairingCode = null;
+        this.pairingExpiresAt = null;
+        this.pairingError = null;
+        this.messageQueue = [];
+
+        const hasStoredAuth = this.hasStoredAuthCredentials();
+        this.persistSessionState();
+
+        if (!hasStoredAuth) {
+          this.recordConnectionEvent({
+            eventType: 'reset_connection',
+            connectionMethod: this.connectionMethod,
+            actor,
+            targetMasked: null,
+            status: 'ok',
+            detail: 'Reset koneksi selesai. State sementara dibersihin, belum ada kredensial tersimpan.',
+          });
+          return {
+            ok: true,
+            status: this.status,
+            hasStoredAuth: false,
+            message: 'Koneksi dan error sementara udah direset. Belum ada sesi tersimpan—pilih QR Code atau Pairing Code buat tautin ya.',
+          };
+        }
+
+        const started = await this.startSocketSessionLocked({
+          method: 'qr',
+          actor,
+        });
+
+        this.recordConnectionEvent({
+          eventType: 'reset_connection',
+          connectionMethod: 'qr',
+          actor,
+          targetMasked: this.phoneNumber ? maskPhoneNumberForGroup(this.phoneNumber) : null,
+          status: started.ok ? 'ok' : 'error',
+          detail: started.ok
+            ? 'Reset koneksi berhasil: state sementara dibersihin & mencoba hubungin ulang pakai sesi tersimpan.'
+            : `Reset koneksi gagal nyambung ulang: ${started.message}`,
+        });
+
+        return {
+          ok: started.ok,
+          status: this.status,
+          hasStoredAuth: true,
+          message: started.ok
+            ? 'Reset koneksi berhasil! Kredensial tersimpan tetap aman dan bot lagi nyambung ulang.'
+            : started.message,
+        };
+      } catch (err) {
+        const msgErr = err instanceof Error ? err.message : 'Gagal reset koneksi Baileys';
+        this.status = 'error';
+        this.lastError = msgErr;
+        this.persistSessionState();
+        this.recordConnectionEvent({
+          eventType: 'reset_connection',
+          connectionMethod: this.connectionMethod,
+          actor,
+          targetMasked: null,
+          status: 'error',
+          detail: `Reset koneksi error: ${msgErr}`,
+        });
+        return {
+          ok: false,
+          status: this.status,
+          hasStoredAuth: this.hasStoredAuthCredentials(),
+          message: msgErr,
+        };
+      }
+    });
+
+    if (lockedRes.lockedOut) {
+      return {
+        ok: false,
+        status: this.status,
+        hasStoredAuth: this.hasStoredAuthCredentials(),
+        message: 'Proses koneksi atau reset lain lagi berjalan, tunggu sebentar ya.',
+      };
+    }
+    return lockedRes.result;
+  }
+
+  public async resetFullSession(options: {
+    confirm: boolean;
+    actor?: string;
+  }): Promise<{
+    ok: boolean;
+    status: string;
+    hasStoredAuth: boolean;
+    message: string;
+  }> {
+    const actor = options.actor || 'owner';
+    if (!options.confirm) {
+      return {
+        ok: false,
+        status: this.status,
+        hasStoredAuth: this.hasStoredAuthCredentials(),
+        message: 'Konfirmasi tambahan wajib dicentang sebelum reset sesi penuh ya.',
+      };
+    }
+
+    const lockedRes = await this.withConnectionLock('reset_full_session', async () => {
+      try {
+        this.connectionEpoch += 1;
+        this.clearReconnectAndScheduledTimers();
+        this.clearPairingTimers();
+        this.closeCurrentSocket();
+
+        this.status = 'disconnected';
+        this.qrDataUrl = null;
+        this.phoneNumber = null;
+        this.lastError = null;
+        this.reconnectAttempts = 0;
+        this.connectionMethod = 'qr';
+        this.pairingStatus = 'idle';
+        this.pairingCode = null;
+        this.pairingPhoneMasked = null;
+        this.pairingRequestedAt = null;
+        this.pairingExpiresAt = null;
+        this.pairingError = null;
+        this.messageQueue = [];
+        this.pendingStickerAudioVisual.clear();
+
+        // Remove ONLY Baileys auth files strictly inside authDir — NEVER touch SQLite app data
+        if (fs.existsSync(this.authDir)) {
+          const entries = fs.readdirSync(this.authDir, { withFileTypes: true });
+          for (const entry of entries) {
+            const resolvedChild = path.resolve(this.authDir, entry.name);
+            if (!resolvedChild.startsWith(this.authDir + path.sep)) continue;
+            fs.rmSync(resolvedChild, { recursive: true, force: true });
+          }
+        } else {
+          fs.mkdirSync(this.authDir, { recursive: true });
+        }
+
+        // Re-initialize clean auth state directory without opening an unsolicited socket yet
+        await useMultiFileAuthState(this.authDir);
+
+        db.prepare(`
+          UPDATE bot_sessions
+          SET status = 'disconnected',
+              phone_number = NULL,
+              qr_code = NULL,
+              last_error = NULL,
+              reconnect_attempts = 0,
+              connection_method = 'qr',
+              pairing_status = 'idle',
+              pairing_expires_at = NULL,
+              updated_at = datetime('now')
+          WHERE id = 'primary'
+        `).run();
+        this.broadcaster('wa:status', this.getStatus());
+
+        this.recordConnectionEvent({
+          eventType: 'reset_full_session',
+          connectionMethod: 'qr',
+          actor,
+          targetMasked: null,
+          status: 'ok',
+          detail: 'Reset sesi penuh berhasil: sesi lama & kredensial Baileys dihapus, data aplikasi tetap aman.',
+        });
+        addSystemLog('info', 'whatsappEngine', 'Reset sesi penuh Baileys selesai oleh owner.');
+
+        return {
+          ok: true,
+          status: this.status,
+          hasStoredAuth: this.hasStoredAuthCredentials(),
+          message: 'Sesi Baileys lama udah dihapus bersih! Pilih QR Code atau Pairing Code buat menautkan ulang WhatsApp.',
+        };
+      } catch (err) {
+        const msgErr = err instanceof Error ? err.message : 'Gagal reset sesi penuh Baileys';
+        this.status = 'error';
+        this.lastError = msgErr;
+        this.persistSessionState();
+        this.recordConnectionEvent({
+          eventType: 'reset_full_session',
+          connectionMethod: this.connectionMethod,
+          actor,
+          targetMasked: null,
+          status: 'error',
+          detail: `Reset sesi penuh gagal: ${msgErr}`,
+        });
+        return {
+          ok: false,
+          status: this.status,
+          hasStoredAuth: this.hasStoredAuthCredentials(),
+          message: msgErr,
+        };
+      }
+    });
+
+    if (lockedRes.lockedOut) {
+      return {
+        ok: false,
+        status: this.status,
+        hasStoredAuth: this.hasStoredAuthCredentials(),
+        message: 'Operasi koneksi lain lagi berjalan, tunggu sebentar ya.',
+      };
+    }
+    return lockedRes.result;
+  }
+
+  private attachMessageHandlerToSocket(sock: WASocket, epoch: number): void {
+    sock.ev.on('messages.upsert', async (m) => {
+      if (epoch !== this.connectionEpoch) return;
+      if (m.type !== 'notify') return;
         for (const msg of m.messages) {
           if (!msg.message || msg.key.fromMe) continue;
           const jid = msg.key.remoteJid;
@@ -308,11 +1251,24 @@ class WhatsAppEngineManager {
           const senderJid = isGroup ? (msg.key.participant || jid) : jid;
           const senderPhone = normalizePhoneDigits(senderJid.split('@')[0].split(':')[0]);
 
+          let selectedRowId: string | undefined;
+          if (inner.listResponseMessage?.singleSelectReply?.selectedRowId) {
+            selectedRowId = inner.listResponseMessage.singleSelectReply.selectedRowId;
+          } else if (inner.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
+            try {
+              const flowData = JSON.parse(inner.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson);
+              if (flowData?.id) selectedRowId = String(flowData.id);
+            } catch {
+              // ignore malformed json
+            }
+          }
+
           const text =
             inner.conversation ||
             inner.extendedTextMessage?.text ||
             inner.imageMessage?.caption ||
             inner.videoMessage?.caption ||
+            inner.listResponseMessage?.title ||
             '';
 
           const ctxInfo =
@@ -429,6 +1385,7 @@ class WhatsAppEngineManager {
             isStickerMessage,
             hasAudioContext: Boolean(inner.audioMessage || quotedContent?.audioMessage),
             isGroupAdmin,
+            selectedRowId,
             source: 'whatsapp',
           });
 
@@ -494,46 +1451,72 @@ class WhatsAppEngineManager {
                   caption: result.replyText || mediaEntry.caption || '',
                 });
               }
+            } else if (result.interactiveMenu && this.sock && this.status === 'connected') {
+              const listPayload = buildBaileysListPayload(result.interactiveMenu, result.replyText);
+              try {
+                await this.sock.sendMessage(jid, listPayload as any);
+                recordMenuFallbackLog({
+                  chatId: jid,
+                  menuKey: result.interactiveMenu.menuKey,
+                  mode: 'interactive_list',
+                  reason: 'Baileys interactive list berhasil dikirim',
+                });
+              } catch (listErr) {
+                const errReason = listErr instanceof Error ? listErr.message : 'Client nggak support interactive list';
+                recordMenuFallbackLog({
+                  chatId: jid,
+                  menuKey: result.interactiveMenu.menuKey,
+                  mode: 'text_fallback',
+                  reason: errReason,
+                });
+                if (result.replyText) {
+                  this.enqueueMessage(jid, result.replyText);
+                }
+              }
             } else if (result.replyText) {
               this.enqueueMessage(jid, result.replyText);
             }
           }
         }
       });
-
-      return { ok: true, status: this.status, message: 'Inisialisasi koneksi WhatsApp dimulai.' };
-    } catch (err) {
-      this.status = 'error';
-      this.lastError = err instanceof Error ? err.message : 'Gagal menghubungkan Baileys';
-      this.persistSessionState();
-      addSystemLog('error', 'whatsappEngine', this.lastError);
-      return { ok: false, status: 'error', message: this.lastError };
-    }
   }
 
-  public async disconnect(): Promise<{ ok: boolean; message: string }> {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    for (const timer of this.scheduledTimers) {
-      clearTimeout(timer);
-    }
-    this.scheduledTimers.clear();
-    this.reconnectAttempts = 0;
-    if (this.sock) {
-      try {
-        this.sock.end(undefined);
-      } catch {
-        // ignore
+  public async disconnect(actor = 'owner'): Promise<{ ok: boolean; message: string }> {
+    const lockedRes = await this.withConnectionLock('disconnect', async () => {
+      this.connectionEpoch += 1;
+      this.clearReconnectAndScheduledTimers();
+      this.clearPairingTimers();
+      this.closeCurrentSocket();
+
+      this.status = 'disconnected';
+      this.qrDataUrl = null;
+      this.reconnectAttempts = 0;
+      if (this.pairingStatus === 'waiting' || this.pairingStatus === 'code_ready') {
+        this.pairingStatus = 'cancelled';
+        this.pairingCode = null;
+        this.pairingExpiresAt = null;
       }
-      this.sock = null;
+
+      this.persistSessionState();
+      this.recordConnectionEvent({
+        eventType: 'disconnect',
+        connectionMethod: this.connectionMethod,
+        actor,
+        targetMasked: this.phoneNumber ? maskPhoneNumberForGroup(this.phoneNumber) : this.pairingPhoneMasked,
+        status: 'ok',
+        detail: 'Koneksi WhatsApp diputuskan oleh owner.',
+      });
+      addSystemLog('info', 'whatsappEngine', 'Koneksi WhatsApp diputuskan oleh owner.');
+      return { ok: true, message: 'Koneksi WhatsApp udah diputuskan.' };
+    });
+
+    if (lockedRes.lockedOut) {
+      return {
+        ok: false,
+        message: 'Proses koneksi atau reset lain lagi berjalan, tunggu sebentar ya.',
+      };
     }
-    this.status = 'disconnected';
-    this.qrDataUrl = null;
-    this.persistSessionState();
-    addSystemLog('info', 'whatsappEngine', 'Koneksi WhatsApp diputuskan oleh owner.');
-    return { ok: true, message: 'Koneksi WhatsApp diputuskan.' };
+    return lockedRes.result;
   }
 
   public enqueueMessage(jid: string, text: string): void {
@@ -666,13 +1649,13 @@ class WhatsAppEngineManager {
     });
 
     const activePrefixes = this.getActivePrefixes();
-    const parsed = parseCommandInput(msg.text, activePrefixes, {
+    let parsed = parseCommandInput(msg.text, activePrefixes, {
       mentions: msg.mentions,
       hasReply: msg.hasReply,
       hasMedia: msg.hasMedia,
     });
 
-    // Check active interactive WhatsApp Wizard (e.g. .addredeem multi-step builder) BEFORE game fallback
+    // Check active interactive WhatsApp Wizard (e.g. .addredeem multi-step builder) BEFORE menu & game fallback
     const activeWizard = db
       .prepare(
         `SELECT * FROM whatsapp_wizards
@@ -692,7 +1675,40 @@ class WhatsAppEngineManager {
       return wizardRes;
     }
 
-    // Check if there is an active game session in this chat when text is NOT a command
+    let isInteractiveMenuSelection = false;
+
+    // 1) Explicit Interactive List row tap takes priority (non-numeric rowId)
+    if (msg.selectedRowId && msg.selectedRowId.trim().length > 0) {
+      const selRes = resolveMenuSelection({
+        chatId: msg.chatId,
+        userPhone: msg.senderPhone,
+        chatScope: msg.chatScope,
+        selectedRowId: msg.selectedRowId,
+        rawText: msg.text,
+        isOwner,
+        isGroupAdmin: Boolean(msg.isGroupAdmin),
+        prefix: activePrefixes[0] || '.',
+        lang,
+      });
+      if (selRes.kind === 'matched_command' && selRes.commandText) {
+        isInteractiveMenuSelection = true;
+        parsed = parseCommandInput(selRes.commandText, activePrefixes, {
+          mentions: msg.mentions,
+          hasReply: msg.hasReply,
+          hasMedia: msg.hasMedia,
+        });
+      } else if (selRes.kind !== 'not_menu_input') {
+        const reply = selRes.message || t.menuInvalidChoice(activePrefixes[0] || '.');
+        this.emitOutbound(msg, reply);
+        return {
+          handled: true,
+          replyText: reply,
+          status: selRes.kind === 'cancelled' ? 'ok' : selRes.kind === 'denied' ? 'denied' : 'error',
+        };
+      }
+    }
+
+    // 2) Non-command input: give active game turn priority BEFORE numbered menu fallback so numeric guesses never collide!
     if (!parsed.isCommand) {
       const activeGame = db
         .prepare("SELECT id FROM game_sessions WHERE chat_id = ? AND chat_scope = ? AND status IN ('waiting', 'active') ORDER BY started_at DESC LIMIT 1")
@@ -723,8 +1739,41 @@ class WhatsAppEngineManager {
           };
         }
       }
-      // Note: ordinary chat between members without invoking bot MUST NOT count toward group streak!
-      return { handled: false, replyText: '', status: 'ignored' };
+
+      // 3) Check numbered text fallback selection against active interactive menu session
+      if (/^\d{1,2}$/.test(msg.text.trim())) {
+        const fallbackSel = resolveMenuSelection({
+          chatId: msg.chatId,
+          userPhone: msg.senderPhone,
+          chatScope: msg.chatScope,
+          rawText: msg.text,
+          isOwner,
+          isGroupAdmin: Boolean(msg.isGroupAdmin),
+          prefix: activePrefixes[0] || '.',
+          lang,
+        });
+        if (fallbackSel.kind === 'matched_command' && fallbackSel.commandText) {
+          isInteractiveMenuSelection = true;
+          parsed = parseCommandInput(fallbackSel.commandText, activePrefixes, {
+            mentions: msg.mentions,
+            hasReply: msg.hasReply,
+            hasMedia: msg.hasMedia,
+          });
+        } else if (fallbackSel.kind !== 'not_menu_input') {
+          const reply = fallbackSel.message || t.menuInvalidChoice(activePrefixes[0] || '.');
+          this.emitOutbound(msg, reply);
+          return {
+            handled: true,
+            replyText: reply,
+            status: fallbackSel.kind === 'cancelled' ? 'ok' : fallbackSel.kind === 'denied' ? 'denied' : 'error',
+          };
+        }
+      }
+
+      if (!parsed.isCommand) {
+        // Note: ordinary chat between members without invoking bot MUST NOT count toward group streak!
+        return { handled: false, replyText: '', status: 'ignored' };
+      }
     }
 
     // Group streak counts EVERY command/interaction with the bot without exception
@@ -834,8 +1883,8 @@ class WhatsAppEngineManager {
       return { handled: true, replyText: reply, status: 'denied', commandExecuted: cmdRow.name };
     }
 
-    // Cooldown validation
-    if (!isOwner && cmdRow.cooldown_sec > 0) {
+    // Cooldown validation (skip cooldown when tapping/navigating submenus via Interactive List / numbered fallback)
+    if (!isOwner && cmdRow.cooldown_sec > 0 && !(isInteractiveMenuSelection && cmdRow.name === 'menu')) {
       const cdKey = `${msg.senderPhone}:${cmdRow.name}`;
       const expires = this.cooldownMap.get(cdKey) ?? 0;
       if (Date.now() < expires) {
@@ -925,119 +1974,158 @@ class WhatsAppEngineManager {
     });
   }
 
-  private buildInteractiveMenu(prefix: string, rawArgs: string, isOwner: boolean): BotDispatchResponse {
-    const sub = rawArgs.trim().toUpperCase();
-    const botName = (db.prepare("SELECT value FROM settings WHERE key = 'bot_name'").get() as { value: string } | undefined)?.value || 'Freya-san bot by Pak Ujan';
+  private buildInteractiveMenu(
+    prefix: string,
+    rawArgs: string,
+    msg: IncomingBotMessage,
+    isOwner: boolean,
+    lang: BotLang = 'id',
+  ): BotDispatchResponse {
+    const trimmed = rawArgs.trim();
+    const t = botText(lang);
 
-    if (sub === '48GROUP') {
-      const rows = [
-        { id: '48_diff', title: 'Difficulty Explorer JKT48 (Level 1–3)', description: 'New Era–Fight Era (Mudah–Menengah), Era One, hingga Pre-One Era', command: `${prefix}jkt48 level` },
-        { id: '48_team', title: 'Team Explorer JKT48 (Old / New / Other)', description: 'Jelajahi Team J, KIII, T, Team Love/Dream/Passion & Unassigned', command: `${prefix}jkt48 team` },
-        { id: '48_info', title: '48Group Intelligence Center', description: 'Profil grup, member terverifikasi & sumber resmi', command: `${prefix}jkt48` },
-        { id: '48_member_quiz', title: 'Member Quiz 48Group', description: 'Kuis member berbasis data resmi terverifikasi', command: `${prefix}memberquiz` },
-        { id: '48_song_quiz', title: 'Song & Discography Quiz', description: 'Tebak single, center & tahun rilis 48Group', command: `${prefix}songquiz` },
-        { id: '48_theater', title: 'Theater Challenge', description: 'Kuis setlist & panggung theater 48Group', command: `${prefix}theaterchallenge` },
-        { id: '48_daily', title: 'Daily 48Group Challenge', description: 'Tantangan harian 48Group', command: `${prefix}daily48` },
-        { id: '48_ww', title: 'Werewolf 48Group', description: 'Permainan sosial multiplayer bertema 48Group', command: `${prefix}werewolf48` },
-        { id: 'back_game', title: 'Kembali ke Menu GAME', description: 'Kembali ke daftar Game Center', command: `${prefix}menu game` },
-      ];
-      const text = [
-        `*${botName} — SUBMENU 48GROUP*`,
-        '',
-        ...rows.map((r, i) => `${i + 1}. ${r.title} (${r.command})\n   ${r.description}`),
-        '',
-        `Ketik ${prefix}menu untuk kembali ke Menu Utama.`,
-      ].join('\n');
-
-      return {
-        handled: true,
-        replyText: text,
-        interactiveMenu: {
-          title: '48GROUP CENTER',
-          subtitle: 'Intelligence Archive, Explorer & Game Center',
-          sections: [{ title: 'Submenu 48GROUP', rows }],
-        },
-        status: 'ok',
-      };
-    }
-
-    const categories: Array<{ key: string; label: string; desc: string }> = [
-      { key: 'AI', label: 'AI', desc: 'Nexara AI, OpenAI fallback & pemrosesan cerdas' },
-      { key: 'DOWNLOAD', label: 'DOWNLOAD', desc: 'Adapter unduhan media sosial & video' },
-      { key: 'GAME', label: 'GAME (termasuk 48GROUP)', desc: 'Game Center Umum & Submenu 48GROUP' },
-      { key: 'GENERAL', label: 'GENERAL', desc: 'Menu utama, ping, info bot & changelog' },
-      { key: 'GROUP', label: 'GROUP', desc: 'Moderasi grup, anti-fitur, absen & jadwal' },
-      { key: 'INFO', label: 'INFO', desc: 'Balance, EXP, level, profil & status layanan' },
-      ...(isOwner ? [{ key: 'OWNER', label: 'OWNER', desc: 'Manajemen prefix, broadcast, redeem & grup' }] : []),
-      { key: 'RANDOM', label: 'RANDOM', desc: 'Pantun, puisi, fakta unik & generator acak' },
-      { key: 'SEARCH', label: 'SEARCH', desc: 'Cuaca, jadwal shalat, Wikipedia & pencarian' },
-      { key: 'STICKER', label: 'STICKER', desc: 'Pembuatan & watermark stiker WhatsApp' },
-      { key: 'TEXTMAKER', label: 'TEXTMAKER', desc: '38 gaya generator teks visual' },
-      { key: 'TOOLS', label: 'TOOLS', desc: 'Folio, Base64, QR Code, terjemahan & utilitas' },
-    ];
-
-    if (sub && categories.some((c) => c.key === sub)) {
-      const cmds = ALL_COMMANDS.filter((c) => c.category === sub).slice(0, 14);
-      const rows = cmds.map((c) => ({
-        id: `cmd_${c.name}`,
-        title: `${prefix}${c.name}`,
-        description: c.description,
-        command: c.example || `${prefix}${c.name}`,
-      }));
-
-      if (sub === 'GAME') {
-        rows.unshift({
-          id: 'submenu_48group',
-          title: '48GROUP CENTER (Submenu Khusus)',
-          description: 'Buka seluruh kuis, arsip & game 48Group',
-          command: `${prefix}menu 48group`,
+    // Check if user requested help on a specific command (e.g. ".help tolive" or ".menu ping")
+    const knownMenuKeys = new Set([
+      '',
+      'main',
+      'games',
+      'game',
+      '48group',
+      'jkt48',
+      '48group_level',
+      '48group_team',
+      '48group_quiz',
+      'group_settings',
+      'grup',
+      'groupsetting',
+      'bot_settings',
+      'bot',
+      'settings',
+      'owner',
+      'premium_redeem',
+      'premium',
+      'redeem',
+      'economy',
+      'ekonomi',
+      'transaksi',
+      'help_info',
+      'bantuan',
+      'info',
+      'help',
+      'features',
+      'fitur',
+      'ai',
+      'download',
+      'general',
+      'group',
+      'random',
+      'search',
+      'sticker',
+      'textmaker',
+      'tools',
+    ]);
+    const lowerArg = trimmed.toLowerCase();
+    if (
+      lowerArg &&
+      !knownMenuKeys.has(lowerArg) &&
+      !lowerArg.startsWith('category:') &&
+      !lowerArg.startsWith('confirm:') &&
+      !lowerArg.startsWith('48group_team:')
+    ) {
+      const targetCmd = findCommandByNameOrAlias(lowerArg);
+      if (targetCmd) {
+        if (targetCmd.isOwnerOnly && !isOwner) {
+          return { handled: true, replyText: t.ownerOnly(targetCmd.name), status: 'denied' };
+        }
+        const aliasesText = targetCmd.aliases.length > 0 ? `\nAlias: ${targetCmd.aliases.map((a) => `${prefix}${a}`).join(', ')}` : '';
+        const exampleText = targetCmd.example ? `\nContoh: *${targetCmd.example}*` : `\nContoh: *${prefix}${targetCmd.name}*`;
+        const guideText = `📘 *${t.helpHeader(targetCmd.name)}*\nKategori: ${targetCmd.category}\n${targetCmd.description}${aliasesText}${exampleText}\n\n_${t.botFooter}_`;
+        const quickMenu = issueMenuSession({
+          chatId: msg.chatId,
+          userPhone: msg.senderPhone,
+          chatScope: msg.chatScope,
+          menu: {
+            menuKey: `cmd_help:${targetCmd.name}`,
+            title: `${prefix}${targetCmd.name}`,
+            subtitle: targetCmd.description,
+            buttonText: t.menuListButton,
+            footer: t.botFooter,
+            sections: [
+              {
+                title: 'Aksi Cepat',
+                rows: [
+                  {
+                    id: `cmd:run:${targetCmd.name}`,
+                    title: `▶️ Jalankan ${prefix}${targetCmd.name}`,
+                    description: targetCmd.example || `${prefix}${targetCmd.name}`,
+                    command: targetCmd.example || `${prefix}${targetCmd.name}`,
+                    requiredPermission: targetCmd.permission === 'owner' ? 'owner' : targetCmd.permission === 'group_admin' ? 'group_admin' : 'public',
+                    actionKind: 'command',
+                  },
+                  {
+                    id: `menu:category:${targetCmd.category}:1`,
+                    title: `⬅️ Balik ke ${targetCmd.category}`,
+                    description: `Lihat command lain di kategori ${targetCmd.category}`,
+                    command: `${prefix}menu category:${targetCmd.category}:1`,
+                    requiredPermission: targetCmd.category === 'OWNER' ? 'owner' : 'public',
+                    actionKind: 'submenu',
+                  },
+                  {
+                    id: 'nav:main',
+                    title: t.menuBackMainTitle,
+                    description: t.menuBackMainDesc,
+                    command: `${prefix}menu`,
+                    requiredPermission: 'public',
+                    actionKind: 'submenu',
+                  },
+                ],
+              },
+            ],
+          },
         });
+        return {
+          handled: true,
+          replyText: formatMenuFallbackText(quickMenu, guideText, lang),
+          interactiveMenu: quickMenu,
+          status: 'ok',
+        };
       }
+    }
 
-      const fallbackLines = [
-        `*${botName} — KATEGORI ${sub}*`,
-        '',
-        ...rows.map((r, idx) => `${idx + 1}. ${r.title} — ${r.description}\n   Contoh: ${r.command}`),
-        '',
-        `Ketik ${prefix}menu untuk kembali ke Menu Utama.`,
-      ].join('\n');
+    const built = buildMenuPayload(trimmed || 'main', {
+      prefix,
+      lang,
+      isOwner,
+      isGroupAdmin: Boolean(msg.isGroupAdmin),
+      chatScope: msg.chatScope,
+      groupName: msg.groupName,
+      botStatus: this.status,
+      senderName: msg.senderName,
+    });
 
+    if (built.deniedReason) {
       return {
         handled: true,
-        replyText: fallbackLines,
-        interactiveMenu: {
-          title: `MENU ${sub}`,
-          subtitle: 'Pilih fitur atau salin contoh command',
-          sections: [{ title: `Daftar Fitur ${sub}`, rows }],
-        },
-        status: 'ok',
+        replyText: built.deniedReason,
+        status: 'denied',
       };
     }
 
-    const menuSections = categories.map((c) => ({
-      id: `cat_${c.key}`,
-      title: c.label,
-      description: c.desc,
-      command: `${prefix}menu ${c.key.toLowerCase()}`,
-    }));
+    const issuedMenu = issueMenuSession({
+      chatId: msg.chatId,
+      userPhone: msg.senderPhone,
+      chatScope: msg.chatScope,
+      menu: built.menu,
+    });
 
-    const fallbackMain = [
-      `*${botName} — MENU UTAMA*`,
-      `Prefix aktif: ${this.getActivePrefixes().join(' ')} (mendukung spasi & tanpa spasi)`,
-      '',
-      ...menuSections.map((s, idx) => `${idx + 1}. ${s.title} — ${s.command}`),
-      '',
-      `Khusus 48Group: ketik ${prefix}menu 48group atau ${prefix}48group`,
-    ].join('\n');
+    if (msg.source === 'simulator') {
+      // Keep track only when requested or record interactive render in simulator gracefully
+    }
 
     return {
       handled: true,
-      replyText: fallbackMain,
-      interactiveMenu: {
-        title: botName,
-        subtitle: 'Interactive List Menu (Fallback Text Otomatis Tersedia)',
-        sections: [{ title: 'MENU UTAMA', rows: menuSections }],
-      },
+      replyText: formatMenuFallbackText(issuedMenu, built.headerText, lang),
+      interactiveMenu: issuedMenu,
       status: 'ok',
     };
   }
@@ -1058,7 +2146,7 @@ class WhatsAppEngineManager {
     if (cmd.status === 'pending_specification') {
       return {
         handled: true,
-        replyText: `Perintah "${prefix}${name}" masih berstatus pending_specification (belum diaktifkan secara spesifik oleh owner).`,
+        replyText: `Command "${prefix}${name}" statusnya masih pending_specification nih (belum diaktifin spesifik sama Owner).`,
         status: 'pending',
       };
     }
@@ -1066,14 +2154,14 @@ class WhatsAppEngineManager {
     if (cmd.status === 'pending_integration' || !cmd.has_real_handler) {
       return {
         handled: true,
-        replyText: `Perintah "${prefix}${name}" masuk kategori ${cmd.category}, tapi integrasi layanan eksternalnya belum tersambung di server ini.`,
+        replyText: `Command "${prefix}${name}" masuk kategori ${cmd.category}, tapi layanan eksternalnya belum tersambung di server ini ya.`,
         status: 'pending',
       };
     }
 
     // Menu & General
     if (name === 'menu') {
-      return this.buildInteractiveMenu(prefix, rawArgs, isOwner);
+      return this.buildInteractiveMenu(prefix, rawArgs, msg, isOwner, lang);
     }
 
     if (name === 'ping') {
@@ -1158,12 +2246,39 @@ class WhatsAppEngineManager {
       return { handled: true, replyText: `Prefix tambahan "${p}" sudah dihapus.`, status: 'ok' };
     }
     if (name === 'resetprefix') {
+      if (args[0]?.toLowerCase() !== 'confirm') {
+        return this.buildInteractiveMenu(prefix, 'confirm:resetprefix', msg, isOwner, lang);
+      }
       db.transaction(() => {
         db.prepare('DELETE FROM prefixes WHERE is_default = 0').run();
         db.prepare('UPDATE prefixes SET enabled = 1 WHERE is_default = 1').run();
       })();
       addAuditLog(msg.senderPhone, 'prefix.reset', 'default_10');
       return { handled: true, replyText: 'Semua 10 prefix bawaan sudah dikembalikan jadi aktif semua!', status: 'ok' };
+    }
+
+    if (name === 'setcommand') {
+      const sub = (args[0] || '').toLowerCase();
+      if (sub === 'lang' || sub === 'bahasa' || sub === 'language') {
+        const nextLangRaw = (args[1] || '').toLowerCase();
+        if (!['id', 'en', 'ja', 'jp'].includes(nextLangRaw)) {
+          return {
+            handled: true,
+            replyText: `Pilih bahasa dulu ya: ${prefix}setcommand lang id | en | ja`,
+            status: 'error',
+          };
+        }
+        const normalized = normalizeBotLang(nextLangRaw);
+        db.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = 'default_language'").run(normalized);
+        addAuditLog(msg.senderPhone, 'settings.default_language', normalized);
+        const label = normalized === 'en' ? 'English' : normalized === 'ja' ? '日本語 (Japanese)' : 'Indonesia Santai';
+        return {
+          handled: true,
+          replyText: botText(normalized).languageUpdated(label),
+          status: 'ok',
+        };
+      }
+      return this.buildInteractiveMenu(prefix, 'bot_settings', msg, isOwner, lang);
     }
 
     // Streak Pasangan (#streak) & Streak Grup (#streakgrup)
@@ -1368,15 +2483,41 @@ class WhatsAppEngineManager {
     }
 
     if (name === 'report') {
-      if (!rawArgs) return { handled: true, replyText: `Gunakan: ${prefix}report <deskripsi laporan>`, status: 'error' };
+      if (!rawArgs) return { handled: true, replyText: `Cara pakainya: ${prefix}report <isi laporan kamu>`, status: 'error' };
       addSystemLog('warn', 'userReport', rawArgs, { from: maskPhoneNumberForGroup(msg.senderPhone) });
-      return { handled: true, replyText: 'Laporan Anda telah dicatat ke log administrator Freya-san Hub. Terima kasih!', status: 'ok' };
+      return { handled: true, replyText: t.reportSaved(msg.senderName), status: 'ok' };
+    }
+
+    if (name === 'listgroup') {
+      const groups = db
+        .prepare('SELECT id, name, member_count, is_rented, is_permanent FROM groups ORDER BY updated_at DESC LIMIT 20')
+        .all() as Array<{ id: string; name: string; member_count: number; is_rented: number; is_permanent: number }>;
+      if (groups.length === 0) {
+        return { handled: true, replyText: 'Belum ada data grup yang masuk nih.', status: 'ok' };
+      }
+      const lines = groups.map(
+        (g, i) => `${i + 1}. *${g.name}* (${g.member_count} anggota · ${g.is_permanent ? 'Permanen' : g.is_rented ? 'Sewa Aktif' : 'Standar'})`,
+      );
+      return { handled: true, replyText: `👥 *Daftar Grup Terhubung (${groups.length})*\n\n${lines.join('\n')}`, status: 'ok' };
+    }
+
+    if (name === 'listpremium') {
+      const prems = db
+        .prepare("SELECT phone, display_name, premium_expires_at FROM users WHERE is_premium = 1 ORDER BY updated_at DESC LIMIT 20")
+        .all() as Array<{ phone: string; display_name: string; premium_expires_at: string | null }>;
+      if (prems.length === 0) {
+        return { handled: true, replyText: 'Belum ada akun premium aktif saat ini.', status: 'ok' };
+      }
+      const lines = prems.map(
+        (u, i) => `${i + 1}. *${u.display_name}* (${maskPhoneNumberForGroup(u.phone)}) · Exp: ${u.premium_expires_at ? u.premium_expires_at.slice(0, 10) : 'Permanen'}`,
+      );
+      return { handled: true, replyText: `⭐ *Daftar Member Premium (${prems.length})*\n\n${lines.join('\n')}`, status: 'ok' };
     }
 
     // Redeem & Economy transactions (unified transactional service + owner wizard + management suite)
     if (name === 'redeem' || name === 'claimFreyasanredeem') {
       const code = args[0]?.toUpperCase();
-      if (!code) return { handled: true, replyText: `Gunakan: ${prefix}${name} <KODE>`, status: 'error' };
+      if (!code) return { handled: true, replyText: t.redeemPromptCode(prefix), status: 'error' };
       const claimRes = executeRedeemClaim({
         code,
         userPhone: msg.senderPhone,
@@ -1391,7 +2532,7 @@ class WhatsAppEngineManager {
       if (claimRes.rewardsGranted?.levelBonus) rewardDetails.push(`+${claimRes.rewardsGranted.levelBonus} Level`);
       return {
         handled: true,
-        replyText: `${claimRes.message}\nRincian hadiah: ${rewardDetails.join(', ')}\nStatus Akun Anda -> Balance: ${claimRes.userAfter?.balance ?? 0}, Level: ${claimRes.userAfter?.level ?? 1}, EXP: ${claimRes.userAfter?.exp ?? 0}`,
+        replyText: `${claimRes.message}\nRincian hadiah: ${rewardDetails.join(', ')}\nStatus Akun Kamu -> Balance: ${claimRes.userAfter?.balance ?? 0}, Level: ${claimRes.userAfter?.level ?? 1}, EXP: ${claimRes.userAfter?.exp ?? 0}`,
         status: 'ok',
       };
     }
@@ -1403,7 +2544,7 @@ class WhatsAppEngineManager {
     if (name === 'listredeem') {
       const { items } = listRedeemCodes({ limit: 25 });
       if (items.length === 0) {
-        return { handled: true, replyText: 'Belum ada kode redeem yang terdaftar.', status: 'ok' };
+        return { handled: true, replyText: 'Belum ada kode redeem yang terdaftar nih.', status: 'ok' };
       }
       const lines = items.map(
         (r, i) =>
@@ -1414,16 +2555,16 @@ class WhatsAppEngineManager {
 
     if (name === 'inforedeem' || name === 'redeeminfo') {
       const code = args[0]?.toUpperCase();
-      if (!code) return { handled: true, replyText: `Gunakan: ${prefix}redeeminfo <KODE>`, status: 'error' };
+      if (!code) return { handled: true, replyText: `Cara pakainya: ${prefix}redeeminfo <KODE>`, status: 'error' };
       const detail = getRedeemDetail(code);
-      if (!detail.code) return { handled: true, replyText: `Kode redeem ${code} tidak ditemukan.`, status: 'error' };
+      if (!detail.code) return { handled: true, replyText: `Kode redeem ${code} nggak ketemu nih.`, status: 'error' };
       const c = detail.code;
       const extraText = c.additionalRewards.length
         ? c.additionalRewards.map((a) => `${a.rewardId}(${JSON.stringify(a.params)})`).join(', ')
-        : 'Tidak ada';
+        : 'Nggak ada';
       return {
         handled: true,
-        replyText: `*Detail Kode Redeem ${c.code}*\nNama: ${c.name}\nDeskripsi: ${c.description || '-'}\nStatus: ${c.active ? (c.isExpired ? 'Kedaluwarsa' : 'Aktif') : 'Nonaktif'}\nHadiah Utama: +${c.rewardBalance} Bal, +${c.rewardExp} EXP, +${c.rewardLevel} Level\nHadiah Tambahan: ${extraText}\nBatas Klaim: ${c.claimedCount}/${c.maxClaims || '∞'} (Per user: ${c.perUserLimit}x)\nCooldown: ${c.cooldownSec} dtk\nKedaluwarsa: ${c.expiresAt || 'Tidak ada'}`,
+        replyText: `*Detail Kode Redeem ${c.code}*\nNama: ${c.name}\nDeskripsi: ${c.description || '-'}\nStatus: ${c.active ? (c.isExpired ? 'Kedaluwarsa' : 'Aktif') : 'Nonaktif'}\nHadiah Utama: +${c.rewardBalance} Bal, +${c.rewardExp} EXP, +${c.rewardLevel} Level\nHadiah Tambahan: ${extraText}\nBatas Klaim: ${c.claimedCount}/${c.maxClaims || '∞'} (Per user: ${c.perUserLimit}x)\nCooldown: ${c.cooldownSec} dtk\nKedaluwarsa: ${c.expiresAt || 'Nggak ada batas'}`,
         status: 'ok',
       };
     }
@@ -1433,7 +2574,7 @@ class WhatsAppEngineManager {
       if (!code || args.length < 2) {
         return {
           handled: true,
-          replyText: `Gunakan: ${prefix}editredeem <KODE> max_claims=100 per_user_limit=1 balance=200 exp=50 level=1 active=on`,
+          replyText: `Formatnya: ${prefix}editredeem <KODE> max_claims=100 per_user_limit=1 balance=200 exp=50 level=1 active=on`,
           status: 'error',
         };
       }
@@ -1452,43 +2593,46 @@ class WhatsAppEngineManager {
         if (key === 'expires') patch.expiresAt = v.toLowerCase() === 'none' ? null : v;
       }
       const res = updateRedeemCode(msg.senderPhone, code, patch);
-      if (!res.ok) return { handled: true, replyText: `Gagal memperbarui ${code}: ${res.error}`, status: 'error' };
-      return { handled: true, replyText: `Kode redeem ${res.item.code} berhasil diperbarui (Klaim maks: ${res.item.maxClaims}, Balance: ${res.item.rewardBalance}, Aktif: ${res.item.active ? 'Ya' : 'Tidak'}).`, status: 'ok' };
+      if (!res.ok) return { handled: true, replyText: `Gagal update ${code}: ${res.error}`, status: 'error' };
+      return { handled: true, replyText: `Kode redeem ${res.item.code} udah diperbarui (Klaim maks: ${res.item.maxClaims}, Balance: ${res.item.rewardBalance}, Aktif: ${res.item.active ? 'Ya' : 'Nggak'}).`, status: 'ok' };
     }
 
     if (name === 'deleteredeem' || name === 'delredeem') {
       const code = args[0]?.toUpperCase();
-      if (!code) return { handled: true, replyText: `Gunakan: ${prefix}delredeem <KODE>`, status: 'error' };
+      if (!code) return { handled: true, replyText: `Cara pakainya: ${prefix}delredeem <KODE>`, status: 'error' };
+      if (args[1]?.toLowerCase() !== 'confirm') {
+        return this.buildInteractiveMenu(prefix, `confirm:delredeem:${code}`, msg, isOwner, lang);
+      }
       const res = deleteRedeemCode(msg.senderPhone, code);
       if (!res.ok) return { handled: true, replyText: res.error, status: 'error' };
-      return { handled: true, replyText: `Kode redeem ${res.code} dihapus dari daftar aktif. Riwayat klaim historis tetap disimpan secara utuh.`, status: 'ok' };
+      return { handled: true, replyText: `Kode redeem ${res.code} udah dihapus dari daftar aktif. Riwayat klaim lama tetap aman ya.`, status: 'ok' };
     }
 
     if (name === 'redeemdisable' || name === 'redeemenable') {
       const code = args[0]?.toUpperCase();
-      if (!code) return { handled: true, replyText: `Gunakan: ${prefix}${name} <KODE>`, status: 'error' };
+      if (!code) return { handled: true, replyText: `Cara pakainya: ${prefix}${name} <KODE>`, status: 'error' };
       const enable = name === 'redeemenable';
       const res = toggleRedeemCode(msg.senderPhone, code, enable);
       if (!res.ok) return { handled: true, replyText: res.error, status: 'error' };
-      return { handled: true, replyText: `Kode redeem ${res.item.code} berhasil ${enable ? 'diaktifkan' : 'dinonaktifkan'}.`, status: 'ok' };
+      return { handled: true, replyText: `Kode redeem ${res.item.code} berhasil ${enable ? 'diaktifin' : 'dinonaktifin'}.`, status: 'ok' };
     }
 
     if (name === 'redeemreset') {
       const code = args[0]?.toUpperCase();
       const confirmed = args[1]?.toLowerCase() === 'confirm';
-      if (!code) return { handled: true, replyText: `Gunakan: ${prefix}redeemreset <KODE> confirm`, status: 'error' };
+      if (!code) return { handled: true, replyText: `Cara pakainya: ${prefix}redeemreset <KODE> confirm`, status: 'error' };
       if (!confirmed) {
-        return { handled: true, replyText: `Konfirmasi wajib: ketik "${prefix}redeemreset ${code} confirm" untuk mereset kuota klaim tanpa menghapus log riwayat.`, status: 'pending' };
+        return this.buildInteractiveMenu(prefix, `confirm:redeemreset:${code}`, msg, isOwner, lang);
       }
       const res = resetRedeemClaims(msg.senderPhone, code, true);
       if (!res.ok) return { handled: true, replyText: res.error, status: 'error' };
-      return { handled: true, replyText: `Counter klaim kode ${res.code} telah direset ke 0 (log riwayat tetap terjaga).`, status: 'ok' };
+      return { handled: true, replyText: `Hitungan klaim kode ${res.code} udah direset ke 0 (log riwayat tetap aman ya).`, status: 'ok' };
     }
 
     if (name === 'redeemhistory') {
       const code = args[0]?.toUpperCase();
       const { items, total } = getClaimHistory({ code: code || undefined, limit: 10 });
-      if (items.length === 0) return { handled: true, replyText: 'Belum ada catatan riwayat klaim.', status: 'ok' };
+      if (items.length === 0) return { handled: true, replyText: 'Belum ada riwayat klaim nih.', status: 'ok' };
       const lines = items.map((h, i) => `${i + 1}. [${h.status.toUpperCase()}] ${h.code} oleh ${maskPhoneNumberForGroup(h.userPhone)} (${h.createdAt})`);
       return { handled: true, replyText: `*Riwayat Klaim Redeem (${items.length}/${total})*\n\n${lines.join('\n')}`, status: 'ok' };
     }
@@ -1506,21 +2650,21 @@ class WhatsAppEngineManager {
       const targetPhone = args[0]?.replace(/\D/g, '');
       const amount = Number.parseInt(args[1] || '0', 10);
       if (!targetPhone || Number.isNaN(amount) || amount <= 0 || amount > 10000) {
-        return { handled: true, replyText: `Gunakan: ${prefix}tfbalance <nomor> <jumlah 1-10000>`, status: 'error' };
+        return { handled: true, replyText: `Cara pakainya: ${prefix}tfbalance <nomor> <jumlah 1-10000>`, status: 'error' };
       }
       if (targetPhone === msg.senderPhone) {
-        return { handled: true, replyText: 'Tidak bisa mentransfer balance ke diri sendiri.', status: 'error' };
+        return { handled: true, replyText: 'Nggak bisa transfer balance ke diri sendiri ya.', status: 'error' };
       }
       try {
         db.transaction(() => {
           const sender = db.prepare('SELECT balance FROM users WHERE phone = ?').get(msg.senderPhone) as { balance: number };
-          if (!sender || sender.balance < amount) throw new Error('Balance virtual Anda tidak mencukupi.');
+          if (!sender || sender.balance < amount) throw new Error('Saldo balance kamu nggak cukup nih.');
           applyUserBalanceAndExp(msg.senderPhone, msg.senderName, -amount, 0, `Transfer balance ke ${maskPhoneNumberForGroup(targetPhone)}`);
           applyUserBalanceAndExp(targetPhone, targetPhone, amount, 0, `Terima balance dari ${maskPhoneNumberForGroup(msg.senderPhone)}`);
         })();
-        return { handled: true, replyText: `Transfer virtual ${amount} Balance berhasil dicatat.`, status: 'ok' };
+        return { handled: true, replyText: `Siap! Transfer virtual ${amount} Balance udah dicatat.`, status: 'ok' };
       } catch (err) {
-        return { handled: true, replyText: err instanceof Error ? err.message : 'Gagal transfer.', status: 'error' };
+        return { handled: true, replyText: err instanceof Error ? err.message : 'Gagal transfer nih.', status: 'error' };
       }
     }
 
@@ -1891,7 +3035,7 @@ class WhatsAppEngineManager {
         if (!isJidNewsletter(newsletterJid) && !newsletterJid.endsWith('@newsletter')) {
           return {
             handled: true,
-            replyText: 'ID atau tautan saluran belum valid (@newsletter tidak ditemukan). Pastikan bot sudah jadi admin saluran tersebut.',
+            replyText: 'ID atau link salurannya belum valid (@newsletter nggak ketemu). Pastiin bot udah jadi admin saluran itu ya.',
             status: 'error',
           };
         }
@@ -1901,7 +3045,7 @@ class WhatsAppEngineManager {
       } catch (err) {
         return {
           handled: true,
-          replyText: `Gagal kirim ke Saluran WhatsApp: ${err instanceof Error ? err.message : 'Akun tidak punya izin admin saluran atau tidak didukung sesi ini.'}`,
+          replyText: `Gagal kirim ke Saluran WhatsApp: ${err instanceof Error ? err.message : 'Akun belum punya izin admin saluran atau sesi ini nggak support.'}`,
           status: 'error',
         };
       }
@@ -1926,7 +3070,7 @@ class WhatsAppEngineManager {
       }
       return {
         handled: true,
-        replyText: 'WhatsApp Engine sedang offline, jadi bio profil belum bisa di-push ke server WhatsApp.',
+        replyText: 'WhatsApp Engine lagi offline, jadi bio profilnya belum bisa dikirim ke server WhatsApp.',
         status: 'pending',
       };
     }
@@ -1983,7 +3127,7 @@ class WhatsAppEngineManager {
     if (name === 'qrcode') {
       const content = rawArgs || 'https://jkt48.com/';
       const qrDataUrl = await QRCode.toDataURL(content, { width: 240 });
-      return { handled: true, replyText: `QR Code berhasil dibuat untuk: ${content}`, qrDataUrl, status: 'ok' };
+      return { handled: true, replyText: `QR Code berhasil dibuat buat: ${content}`, qrDataUrl, status: 'ok' };
     }
     if (name === 'cekplatform') {
       return { handled: true, replyText: `Sumber pesan terdeteksi: ${msg.source === 'simulator' ? 'Web Console Simulator' : 'WhatsApp Client'} (${msg.chatScope}).`, status: 'ok' };
@@ -1993,26 +3137,34 @@ class WhatsAppEngineManager {
     }
 
     if (name === 'kirim') {
-      if (!rawArgs) return { handled: true, replyText: `Gunakan: ${prefix}kirim <nomor|ke owner> <pesan>`, status: 'error' };
+      if (!rawArgs) return { handled: true, replyText: `Cara pakainya: ${prefix}kirim <nomor|ke owner> <pesan>`, status: 'error' };
       const lower = rawArgs.toLowerCase();
       if (lower.startsWith('ke owner ')) {
         const messageText = rawArgs.slice('ke owner '.length).trim();
         addAuditLog(msg.senderPhone, 'kirim.to_owner', 'owner', { preview: messageText.slice(0, 80) });
-        return { handled: true, replyText: `Pesan untuk owner sudah dicatat ke antrean aman (${messageText.length} karakter). Nomor privat owner tetap aman.`, status: 'ok' };
+        return { handled: true, replyText: `Pesan buat Owner udah dicatat ke antrean aman (${messageText.length} karakter). Nomor privat Owner tetap aman.`, status: 'ok' };
       }
       const target = args[0]?.replace(/\D/g, '');
       const bodyText = args.slice(1).join(' ');
-      if (!target || !bodyText) return { handled: true, replyText: `Gunakan: ${prefix}kirim 628xxxxxxxx Pesan Anda`, status: 'error' };
+      if (!target || !bodyText) return { handled: true, replyText: `Cara pakainya: ${prefix}kirim 628xxxxxxxx Pesan kamu`, status: 'error' };
       addAuditLog(msg.senderPhone, 'kirim.direct', maskPhoneNumberForGroup(target), { len: bodyText.length });
       if (this.status === 'connected') {
         this.enqueueMessage(`${target}@s.whatsapp.net`, bodyText);
       }
-      return { handled: true, replyText: `Pesan ke ${maskPhoneNumberForGroup(target)} dimasukkan ke antrean pengiriman resmi.`, status: 'ok' };
+      return { handled: true, replyText: `Pesan ke ${maskPhoneNumberForGroup(target)} udah dimasukin ke antrean pengiriman resmi.`, status: 'ok' };
     }
 
     // 48Group Intelligence Commands
     if (name === '48group') {
-      return this.buildInteractiveMenu(prefix, '48GROUP', isOwner);
+      return this.buildInteractiveMenu(prefix, '48group', msg, isOwner, lang);
+    }
+
+    if (name === 'groupsetting') {
+      return this.buildInteractiveMenu(prefix, 'group_settings', msg, isOwner, lang);
+    }
+
+    if (name === 'gamemode') {
+      return this.buildInteractiveMenu(prefix, 'games', msg, isOwner, lang);
     }
 
     if (name === 'jkt48' || name === 'akb48') {
@@ -2030,24 +3182,7 @@ class WhatsAppEngineManager {
                   : null;
 
           if (!normalizedLevel) {
-            const rows = JKT48_DIFFICULTY_LEVELS.map((l) => ({
-              id: `jkt_lvl_${l.id}`,
-              title: l.title,
-              description: `${l.eraCategory} (${l.periodRange})`,
-              command: `${prefix}jkt48 level ${l.levelOrder}`,
-            }));
-            return {
-              handled: true,
-              replyText: `*JKT48 Difficulty Explorer (3 Level Tetap)*\n\n${JKT48_DIFFICULTY_LEVELS.map(
-                (l) => `${l.levelOrder}. *${l.title}*\n   Era: ${l.eraCategory} (${l.periodRange})\n   Ketik: ${prefix}jkt48 level ${l.levelOrder}`,
-              ).join('\n\n')}`,
-              interactiveMenu: {
-                title: 'Difficulty Explorer JKT48',
-                subtitle: 'Pilih tingkat kesulitan dan era',
-                sections: [{ title: '3 Level Resmi', rows }],
-              },
-              status: 'ok',
-            };
+            return this.buildInteractiveMenu(prefix, '48group_level', msg, isOwner, lang);
           }
 
           const meta = getDifficultyLevelMeta(normalizedLevel)!;
@@ -2070,51 +3205,17 @@ class WhatsAppEngineManager {
         if (subCmd === 'team' || subCmd === 'tim') {
           const targetArg = args[1]?.toLowerCase();
           if (!targetArg) {
-            const rows = JKT48_TEAM_GROUPS.map((g) => ({
-              id: `jkt_grp_${g.id}`,
-              title: g.title,
-              description: g.description,
-              command: `${prefix}jkt48 team ${g.id}`,
-            }));
-            return {
-              handled: true,
-              replyText: `*JKT48 Team Explorer (Klasifikasi Navigasi)*\n\n${JKT48_TEAM_GROUPS.map(
-                (g, i) => `${i + 1}. *${g.title}* — ${g.description}\n   Ketik: ${prefix}jkt48 team ${g.id}`,
-              ).join('\n\n')}\n\nCatatan: ${JKT48_TEAM_GROUPS[0].disclaimer}`,
-              interactiveMenu: {
-                title: 'Team Explorer JKT48',
-                subtitle: 'Old / New / Other & Unassigned',
-                sections: [{ title: 'Kategori Navigasi Team', rows }],
-              },
-              status: 'ok',
-            };
+            return this.buildInteractiveMenu(prefix, '48group_team', msg, isOwner, lang);
           }
 
           if (targetArg === 'old' || targetArg === 'new' || targetArg === 'other') {
-            const teamsInGroup = getTeamsByGroup(targetArg as Jkt48TeamGroupId);
-            const grpMeta = JKT48_TEAM_GROUPS.find((g) => g.id === targetArg)!;
-            const rows = teamsInGroup.map((t) => ({
-              id: t.id,
-              title: t.name,
-              description: t.historicalStatus,
-              command: `${prefix}jkt48 team ${t.id}`,
-            }));
-            return {
-              handled: true,
-              replyText: `*Team Group: ${grpMeta.title}*\n${grpMeta.disclaimer}\n\n${teamsInGroup.map((t, i) => `${i + 1}. *${t.name}*\n   Status: ${t.historicalStatus}\n   Ketik: ${prefix}jkt48 team ${t.id}`).join('\n\n')}`,
-              interactiveMenu: {
-                title: `Team ${grpMeta.title}`,
-                subtitle: grpMeta.description || 'Pilih Team',
-                sections: [{ title: `Daftar Team (${grpMeta.title})`, rows }],
-              },
-              status: 'ok',
-            };
+            return this.buildInteractiveMenu(prefix, `48group_team:${targetArg}`, msg, isOwner, lang);
           }
 
           const teamIdLookup = targetArg.startsWith('team_') ? targetArg : `team_${targetArg}`;
           const teamMeta = getTeamMeta(teamIdLookup) || JKT48_TEAMS.find((t) => t.name.toLowerCase() === args.slice(1).join(' ').toLowerCase());
           if (!teamMeta) {
-            return { handled: true, replyText: `Team "${targetArg}" tidak ditemukan. Ketik ${prefix}jkt48 team untuk membuka kategori Old / New / Other.`, status: 'error' };
+            return { handled: true, replyText: `Team "${targetArg}" nggak ketemu nih. Ketik ${prefix}jkt48 team buat buka kategori Old / New / Other.`, status: 'error' };
           }
           const members = db
             .prepare(`
@@ -2201,13 +3302,75 @@ class WhatsAppEngineManager {
     }
 
     // Group Management Commands
+    if (name === 'welcome' || name === 'left' || name === 'antilink' || name === 'antisticker') {
+      if (msg.chatScope !== 'group') {
+        return { handled: true, replyText: t.groupOnly, status: 'error' };
+      }
+      const mode = (args[0] || '').toLowerCase();
+      if (!['on', 'off'].includes(mode)) {
+        return { handled: true, replyText: `Cara pakainya: ${prefix}${name} on | off`, status: 'error' };
+      }
+      const enabledBool = mode === 'on';
+      if (name === 'welcome') {
+        db.prepare('UPDATE groups SET welcome_enabled = ?, updated_at = datetime(\'now\') WHERE id = ?').run(enabledBool ? 1 : 0, msg.chatId);
+      } else if (name === 'left') {
+        db.prepare('UPDATE groups SET left_enabled = ?, updated_at = datetime(\'now\') WHERE id = ?').run(enabledBool ? 1 : 0, msg.chatId);
+      } else {
+        const grp = db.prepare('SELECT anti_settings_json FROM groups WHERE id = ?').get(msg.chatId) as { anti_settings_json?: string } | undefined;
+        let anti: Record<string, any> = {};
+        try {
+          anti = JSON.parse(grp?.anti_settings_json || '{}');
+        } catch {
+          anti = {};
+        }
+        anti[name] = { ...(anti[name] || { mode: 'warn' }), enabled: enabledBool };
+        db.prepare('UPDATE groups SET anti_settings_json = ?, updated_at = datetime(\'now\') WHERE id = ?').run(JSON.stringify(anti), msg.chatId);
+      }
+      addAuditLog(msg.senderPhone, `group.${name}`, msg.chatId, { enabled: enabledBool });
+      return {
+        handled: true,
+        replyText: `Sip! Fitur *${name}* di grup ini sekarang *${enabledBool ? 'NYALA (ON)' : 'MATI (OFF)'}*.`,
+        status: 'ok',
+      };
+    }
+
+    if (name === 'groupinfo') {
+      if (msg.chatScope !== 'group') {
+        return { handled: true, replyText: t.groupOnly, status: 'error' };
+      }
+      const grp = db.prepare('SELECT * FROM groups WHERE id = ?').get(msg.chatId) as any;
+      let anti: Record<string, any> = {};
+      try {
+        anti = JSON.parse(grp?.anti_settings_json || '{}');
+      } catch {
+        anti = {};
+      }
+      const antiActive = Object.entries(anti)
+        .filter(([, v]: any) => v?.enabled)
+        .map(([k]) => k);
+      return {
+        handled: true,
+        replyText: `👥 *Info Grup: ${grp?.name || msg.groupName || msg.chatId}*\n• Welcome: ${grp?.welcome_enabled ? 'ON' : 'OFF'} · Left: ${grp?.left_enabled ? 'ON' : 'OFF'}\n• Anti-sistem aktif: ${antiActive.length ? antiActive.join(', ') : 'Nggak ada'}\n• Status Sewa: ${grp?.is_permanent ? 'Permanen' : grp?.is_rented ? 'Sewa Aktif' : 'Standar'}`,
+        status: 'ok',
+      };
+    }
+
     if (name === 'antiluar') {
       const testNum = args[0];
       if (testNum && /^\+?\d+$/.test(testNum.replace(/\D/g, ''))) {
         const isIndo = isIndonesianPhoneNumber(testNum);
-        return { handled: true, replyText: `Pemeriksaan Antiluar untuk ${maskPhoneNumberForGroup(testNum)}: ${isIndo ? 'Nomor Indonesia (+62) — Diizinkan' : 'Nomor Luar Negeri — Terdeteksi'}.`, status: 'ok' };
+        return { handled: true, replyText: `Cek Antiluar buat ${maskPhoneNumberForGroup(testNum)}: ${isIndo ? 'Nomor Indonesia (+62) — Aman' : 'Nomor Luar Negeri — Terdeteksi'}.`, status: 'ok' };
       }
-      return { handled: true, replyText: 'Pengaturan Antiluar dapat dikelola (ON/OFF, mode hapus/peringatan/kick, pengecualian) melalui Dashboard -> Group Manager.', status: 'ok' };
+      if (msg.chatScope === 'group' && ['on', 'off'].includes((args[0] || '').toLowerCase())) {
+        const on = args[0].toLowerCase() === 'on';
+        const grp = db.prepare('SELECT anti_settings_json FROM groups WHERE id = ?').get(msg.chatId) as { anti_settings_json?: string } | undefined;
+        let anti: Record<string, any> = {};
+        try { anti = JSON.parse(grp?.anti_settings_json || '{}'); } catch { anti = {}; }
+        anti.antiluar = { ...(anti.antiluar || { mode: 'warn' }), enabled: on };
+        db.prepare('UPDATE groups SET anti_settings_json = ?, updated_at = datetime(\'now\') WHERE id = ?').run(JSON.stringify(anti), msg.chatId);
+        return { handled: true, replyText: `Sip! Fitur *antiluar* di grup ini sekarang *${on ? 'NYALA (ON)' : 'MATI (OFF)'}*.`, status: 'ok' };
+      }
+      return { handled: true, replyText: 'Pengaturan Antiluar bisa dikelola lewat menu .groupsetting atau Dashboard -> Group Manager ya.', status: 'ok' };
     }
 
     if (name === 'done' || name === 'proses') {
@@ -2224,33 +3387,33 @@ class WhatsAppEngineManager {
       const sub = (args[0] || 'list').toLowerCase();
       return {
         handled: true,
-        replyText: `Reqjoin mode "${sub}": siap memproses permintaan anggota bila WhatsApp grup mengaktifkan persetujuan admin dan bot berstatus admin.`,
+        replyText: `Reqjoin mode "${sub}": siap bantu proses permintaan gabung kalau grupnya nyalain persetujuan admin dan bot udah jadi admin grup.`,
         status: 'ok',
       };
     }
 
     if (name === 'golink') {
       const groupId = args[0] || msg.chatId;
-      if (!groupId.endsWith('@g.us')) return { handled: true, replyText: 'ID grup tidak valid (harus berakhiran @g.us).', status: 'error' };
+      if (!groupId.endsWith('@g.us')) return { handled: true, replyText: 'ID grupnya nggak valid nih (harus berakhiran @g.us).', status: 'error' };
       addAuditLog(msg.senderPhone, 'owner.golink', groupId);
       if (this.sock && this.status === 'connected') {
         try {
           const code = await this.sock.groupInviteCode(groupId);
-          return { handled: true, replyText: `Tautan Grup (${groupId}): https://chat.whatsapp.com/${code}`, status: 'ok' };
+          return { handled: true, replyText: `Link Grup (${groupId}): https://chat.whatsapp.com/${code}`, status: 'ok' };
         } catch (err) {
-          return { handled: true, replyText: `Gagal mengambil tautan grup: ${err instanceof Error ? err.message : 'Pastikan bot menjadi admin grup'}`, status: 'error' };
+          return { handled: true, replyText: `Gagal ambil link grup: ${err instanceof Error ? err.message : 'Pastiin bot udah jadi admin grup ya'}`, status: 'error' };
         }
       }
-      return { handled: true, replyText: `Validasi ID grup "${groupId}" berhasil. Hubungkan WhatsApp Engine untuk menarik invite code langsung.`, status: 'ok' };
+      return { handled: true, replyText: `ID grup "${groupId}" udah valid. Hubungin WhatsApp Engine buat narik invite code langsung ya.`, status: 'ok' };
     }
 
     if (name === 'autoread') {
       const mode = args[0]?.toLowerCase();
       const next = mode === 'on' ? 'true' : mode === 'off' ? 'false' : null;
-      if (!next) return { handled: true, replyText: `Gunakan: ${prefix}autoread on | off`, status: 'error' };
+      if (!next) return { handled: true, replyText: `Cara pakainya: ${prefix}autoread on | off`, status: 'error' };
       db.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = 'blue_tick_enabled'").run(next);
       addAuditLog(msg.senderPhone, 'settings.blue_tick', next);
-      return { handled: true, replyText: `Blue Tick Control WhatsApp diubah menjadi: ${next === 'true' ? 'ON' : 'OFF'}.`, status: 'ok' };
+      return { handled: true, replyText: `Blue Tick Control WhatsApp udah diubah jadi: ${next === 'true' ? 'ON' : 'OFF'}.`, status: 'ok' };
     }
 
     // UNO stop command before normal game session routing
@@ -2332,7 +3495,7 @@ class WhatsAppEngineManager {
         .prepare("SELECT id FROM game_sessions WHERE chat_id = ? AND chat_scope = ? AND status IN ('waiting', 'active') ORDER BY started_at DESC LIMIT 1")
         .get(msg.chatId, msg.chatScope) as { id: string } | undefined;
       if (!activeGame) {
-        return { handled: true, replyText: 'Tidak ada sesi permainan aktif pada percakapan ini.', status: 'error' };
+        return { handled: true, replyText: 'Lagi nggak ada sesi game yang jalan di chat ini.', status: 'error' };
       }
       const res = submitGameAction({
         sessionId: activeGame.id,
@@ -2343,7 +3506,7 @@ class WhatsAppEngineManager {
         input: name,
         actionType: name === 'hint' ? 'hint' : 'give_up',
       });
-      return { handled: true, replyText: res.announcement || 'Selesai.', status: 'ok' };
+      return { handled: true, replyText: res.announcement || 'Selesai!', status: 'ok' };
     }
 
     // Random fun handlers
@@ -2473,10 +3636,13 @@ class WhatsAppEngineManager {
       ];
       return {
         handled: true,
-        replyText: `*Langkah 3/6: Hadiah Tambahan?*\nApakah ingin menambahkan hadiah lain dari Reward Registry?\nPilih nomor atau ketik \`tidak\`:\n${active.map((r, i) => `${i + 1}. *${r.name}* — ${r.terms}`).join('\n')}\n0. Tidak, lanjut ke batas klaim`,
+        replyText: `*Langkah 3/6: Hadiah Tambahan?*\nMau tambahin hadiah lain dari Reward Registry nggak?\nPilih nomor atau ketik \`tidak\`:\n${active.map((r, i) => `${i + 1}. *${r.name}* — ${r.terms}`).join('\n')}\n0. Nggak usah, lanjut ke batas klaim`,
         interactiveMenu: {
+          menuKey: 'wizard:addredeem_additional',
           title: 'Reward Registry (.addredeem)',
-          subtitle: 'Pilih hadiah tambahan yang tersedia & memiliki handler aktif',
+          subtitle: 'Pilih hadiah tambahan yang tersedia & punya handler aktif',
+          buttonText: 'Pilih Hadiah',
+          footer: 'Freya-san bot by Pak Ujan',
           sections: [{ title: 'Hadiah Tambahan Resmi', rows }],
         },
         status: 'ok',
@@ -2496,7 +3662,7 @@ class WhatsAppEngineManager {
       const idx = Number.parseInt(raw, 10) - 1;
       const chosen = !Number.isNaN(idx) && active[idx] ? active[idx] : active.find((r) => r.id === lower || r.name.toLowerCase().includes(lower));
       if (!chosen) {
-        return { handled: true, replyText: 'Pilihan tidak ditemukan di Reward Registry aktif. Pilih nomor 1–4 atau ketik `tidak`.', status: 'error' };
+        return { handled: true, replyText: 'Pilihannya nggak ketemu di Reward Registry aktif. Pilih nomor 1–4 atau ketik `tidak`.', status: 'error' };
       }
       state.pendingRewardId = chosen.id;
       saveWizard('additional_param', state);
@@ -2513,7 +3679,7 @@ class WhatsAppEngineManager {
       const chosen = active.find((r) => r.id === state.pendingRewardId);
       if (!chosen) {
         saveWizard('ask_additional', state);
-        return { handled: true, replyText: 'Registry tidak ditemukan, kembali pilih hadiah tambahan atau ketik `tidak`.', status: 'error' };
+        return { handled: true, replyText: 'Registry-nya nggak ketemu, coba pilih hadiah tambahan lagi atau ketik `tidak`.', status: 'error' };
       }
       const parts = raw.split('|').map((s) => s.trim());
       const paramsObj: Record<string, string | number> = {};
@@ -2525,14 +3691,14 @@ class WhatsAppEngineManager {
       });
       const check = validateAdditionalReward({ rewardId: chosen.id, params: paramsObj });
       if (!check.ok) {
-        return { handled: true, replyText: `Validasi parameter gagal: ${check.error}`, status: 'error' };
+        return { handled: true, replyText: `Parameter belum cocok nih: ${check.error}`, status: 'error' };
       }
       state.additionalRewards = [...(state.additionalRewards || []), check.normalized];
       state.pendingRewardId = null;
       saveWizard('ask_additional', state);
       return {
         handled: true,
-        replyText: `Hadiah tambahan *${chosen.name}* ditambahkan! Total hadiah tambahan: ${state.additionalRewards.length}.\n\nTambah hadiah lain (pilih nomor 1–4) atau ketik \`lanjut\` untuk ke Langkah 4.`,
+        replyText: `Hadiah tambahan *${chosen.name}* udah ditambah! Total hadiah tambahan: ${state.additionalRewards.length}.\n\nMau tambah hadiah lain (pilih nomor 1–4) atau ketik \`lanjut\` buat ke Langkah 4.`,
         status: 'ok',
       };
     }
@@ -2545,7 +3711,7 @@ class WhatsAppEngineManager {
       const activeFlag = (parts[3] ?? 'on').toLowerCase() !== 'off';
       const expRaw = parts[4] && parts[4].toLowerCase() !== 'none' ? parts[4] : null;
       if (!Number.isInteger(maxClaims) || maxClaims < 0 || !Number.isInteger(perUserLimit) || perUserLimit < 1 || !Number.isInteger(cooldownSec) || cooldownSec < 0) {
-        return { handled: true, replyText: 'Format batas tidak valid. Contoh: `100 1 0 on none`', status: 'error' };
+        return { handled: true, replyText: 'Format batasnya belum valid nih. Contoh: `100 1 0 on none`', status: 'error' };
       }
       state.maxClaims = maxClaims;
       state.perUserLimit = perUserLimit;
@@ -2554,20 +3720,23 @@ class WhatsAppEngineManager {
       state.expiresAt = expRaw;
       saveWizard('summary', state);
 
-      const extraList = (state.additionalRewards || []).map((a: ConfiguredAdditionalReward) => `${a.rewardId}: ${JSON.stringify(a.params)}`).join('\n- ') || 'Tidak ada';
+      const extraList = (state.additionalRewards || []).map((a: ConfiguredAdditionalReward) => `${a.rewardId}: ${JSON.stringify(a.params)}`).join('\n- ') || 'Nggak ada';
       return {
         handled: true,
-        replyText: `*Langkah 5/6: Ringkasan Konfigurasi Redeem*\n- Kode: *${state.code}*\n- Nama: ${state.name}\n- Hadiah Utama: +${state.rewardBalance} Bal, +${state.rewardExp} EXP, +${state.rewardLevel} Level\n- Hadiah Tambahan:\n- ${extraList}\n- Batas Total: ${state.maxClaims || '∞'} | Per User: ${state.perUserLimit}x | Cooldown: ${state.cooldownSec} dtk\n- Status: ${state.active ? 'Aktif' : 'Nonaktif'} | Kedaluwarsa: ${state.expiresAt || 'Tidak ada'}\n\nKetik *confirm* untuk menyimpan, *edit info|primary|limits* untuk mengubah, atau *batal*.`,
+        replyText: `*Langkah 5/6: Ringkasan Konfigurasi Redeem*\n- Kode: *${state.code}*\n- Nama: ${state.name}\n- Hadiah Utama: +${state.rewardBalance} Bal, +${state.rewardExp} EXP, +${state.rewardLevel} Level\n- Hadiah Tambahan:\n- ${extraList}\n- Batas Total: ${state.maxClaims || '∞'} | Per User: ${state.perUserLimit}x | Cooldown: ${state.cooldownSec} dtk\n- Status: ${state.active ? 'Aktif' : 'Nonaktif'} | Kedaluwarsa: ${state.expiresAt || 'Nggak ada'}\n\nKetik *confirm* buat nyimpan, *edit info|primary|limits* buat ngubah, atau *batal*.`,
         interactiveMenu: {
+          menuKey: 'wizard:addredeem:summary',
           title: 'Konfirmasi Redeem',
           subtitle: `Simpan kode ${state.code}?`,
+          buttonText: 'Pilih Aksi',
+          footer: 'Freya-san bot by Pak Ujan',
           sections: [
             {
               title: 'Tindakan',
               rows: [
-                { id: 'wiz_confirm', title: 'Konfirmasi & Simpan', description: 'Simpan kode redeem secara atomik ke database', command: 'confirm' },
-                { id: 'wiz_edit', title: 'Ubah Hadiah Utama', description: 'Kembali ke langkah hadiah utama', command: 'edit primary' },
-                { id: 'wiz_cancel', title: 'Batalkan', description: 'Batalkan wizard .addredeem', command: 'batal' },
+                { id: 'wiz_confirm', title: 'Konfirmasi & Simpan', description: 'Simpan kode redeem langsung ke database', command: 'confirm' },
+                { id: 'wiz_edit', title: 'Ubah Hadiah Utama', description: 'Balik ke langkah hadiah utama', command: 'edit primary' },
+                { id: 'wiz_cancel', title: 'Batalkan', description: 'Batalin wizard .addredeem', command: 'batal' },
               ],
             },
           ],
@@ -2581,7 +3750,7 @@ class WhatsAppEngineManager {
         const targetStep = lower.replace('edit ', '').trim();
         if (['info', 'primary', 'limits'].includes(targetStep)) {
           saveWizard(targetStep, state);
-          return { handled: true, replyText: `Kembali ke langkah *${targetStep}*. Silakan kirim nilai baru:`, status: 'ok' };
+          return { handled: true, replyText: `Balik ke langkah *${targetStep}*. Kirim nilai barunya ya:`, status: 'ok' };
         }
       }
       if (!['confirm', 'konfirmasi', 'ya', 'simpan'].includes(lower)) {

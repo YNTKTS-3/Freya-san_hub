@@ -400,7 +400,7 @@ export async function generateSpotifyCard(rawArgs: string, langRaw?: string): Pr
     return {
       ok: false,
       kind: 'text_only',
-      caption: 'Gagal mengambil metadata publik dari Spotify oEmbed saat ini (koneksi timeout atau tautan tidak ditemukan).',
+      caption: 'Gagal ambil metadata publik dari Spotify oEmbed sekarang (koneksi timeout atau link-nya nggak ketemu).',
     };
   }
 

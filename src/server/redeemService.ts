@@ -81,10 +81,10 @@ export function getRedeemSettings(): RedeemSettings {
     maxExpCap: Math.max(100, Number(getSettingValue('redeem_max_exp_cap', '50000')) || 50000),
     maxLevelCap: Math.max(1, Number(getSettingValue('redeem_max_level_cap', '50')) || 50),
     defaultPerUserLimit: Math.max(1, Number(getSettingValue('redeem_default_per_user_limit', '1')) || 1),
-    msgSuccess: getSettingValue('redeem_msg_success', 'Kode {code} berhasil diklaim oleh {user}! Hadiah: {rewards}.'),
-    msgExpired: getSettingValue('redeem_msg_expired', 'Kode redeem {code} sudah kedaluwarsa.'),
-    msgLimit: getSettingValue('redeem_msg_limit', 'Kuota klaim untuk kode {code} sudah habis atau batas klaim Anda telah tercapai.'),
-    msgInvalid: getSettingValue('redeem_msg_invalid', 'Kode redeem {code} tidak ditemukan atau sedang nonaktif.'),
+    msgSuccess: getSettingValue('redeem_msg_success', 'Yeay! Kode {code} berhasil diklaim buat {user}! Hadiah: {rewards}.'),
+    msgExpired: getSettingValue('redeem_msg_expired', 'Yah, masa berlaku kode {code} udah habis.'),
+    msgLimit: getSettingValue('redeem_msg_limit', 'Kuota klaim buat kode {code} udah habis nih.'),
+    msgInvalid: getSettingValue('redeem_msg_invalid', 'Kode redeem {code} nggak ketemu atau lagi nonaktif.'),
   };
 }
 
@@ -333,7 +333,7 @@ export function updateRedeemCode(
 ): { ok: true; item: RedeemCodeDTO } | { ok: false; error: string } {
   const upper = code.trim().toUpperCase();
   const row = db.prepare('SELECT * FROM redeem_codes WHERE code = ?').get(upper) as any;
-  if (!row) return { ok: false, error: `Kode redeem ${upper} tidak ditemukan.` };
+  if (!row) return { ok: false, error: `Kode redeem ${upper} nggak ketemu.` };
 
   const current = mapCodeRow(row);
   const settings = getRedeemSettings();
@@ -418,7 +418,7 @@ export function toggleRedeemCode(
 ): { ok: true; item: RedeemCodeDTO } | { ok: false; error: string } {
   const upper = code.trim().toUpperCase();
   const res = db.prepare(`UPDATE redeem_codes SET active = ?, updated_at = datetime('now') WHERE code = ?`).run(active ? 1 : 0, upper);
-  if (res.changes === 0) return { ok: false, error: `Kode redeem ${upper} tidak ditemukan.` };
+  if (res.changes === 0) return { ok: false, error: `Kode redeem ${upper} nggak ketemu.` };
   addAuditLog(actor, active ? 'redeem_enable' : 'redeem_disable', upper);
   const row = db.prepare('SELECT * FROM redeem_codes WHERE code = ?').get(upper);
   return { ok: true, item: mapCodeRow(row) };
@@ -430,11 +430,11 @@ export function resetRedeemClaims(
   confirm: boolean,
 ): { ok: true; code: string } | { ok: false; error: string } {
   if (!confirm) {
-    return { ok: false, error: 'Konfirmasi eksplisit diperlukan untuk mereset kuota klaim kode redeem.' };
+    return { ok: false, error: 'Butuh konfirmasi dulu ya buat reset kuota klaim kode redeem.' };
   }
   const upper = code.trim().toUpperCase();
   const row = db.prepare('SELECT code FROM redeem_codes WHERE code = ?').get(upper);
-  if (!row) return { ok: false, error: `Kode redeem ${upper} tidak ditemukan.` };
+  if (!row) return { ok: false, error: `Kode redeem ${upper} nggak ketemu.` };
 
   db.transaction(() => {
     db.prepare(`UPDATE redeem_codes SET claimed_count = 0, updated_at = datetime('now') WHERE code = ?`).run(upper);
@@ -452,7 +452,7 @@ export function deleteRedeemCode(
 ): { ok: true; code: string } | { ok: false; error: string } {
   const upper = code.trim().toUpperCase();
   const existing = db.prepare('SELECT code, name FROM redeem_codes WHERE code = ?').get(upper) as { code: string; name: string } | undefined;
-  if (!existing) return { ok: false, error: `Kode redeem ${upper} tidak ditemukan.` };
+  if (!existing) return { ok: false, error: `Kode redeem ${upper} nggak ketemu.` };
 
   // Note: redeem_claim_logs & redeem_claims have NO ON DELETE CASCADE so history survives deletion!
   db.prepare('DELETE FROM redeem_codes WHERE code = ?').run(upper);
@@ -568,7 +568,7 @@ export function executeRedeemClaim(input: {
       ok: false,
       status: 'rejected',
       code: '',
-      message: 'Silakan masukkan kode redeem yang valid.',
+      message: 'Masukin kode redeem yang bener dulu ya.',
     };
   }
 
@@ -620,7 +620,7 @@ export function executeRedeemClaim(input: {
     return db.transaction((): RedeemClaimResult => {
       const codeRow = db.prepare('SELECT * FROM redeem_codes WHERE code = ?').get(upperCode) as any;
       if (!codeRow || !codeRow.active) {
-        const msg = renderRedeemMessage(settings.msgInvalid, `Kode redeem ${upperCode} tidak ditemukan atau tidak aktif.`, {
+        const msg = renderRedeemMessage(settings.msgInvalid, `Kode redeem ${upperCode} nggak ketemu atau lagi nonaktif.`, {
           code: upperCode,
           user: displayName,
         });
@@ -678,7 +678,7 @@ export function executeRedeemClaim(input: {
 
       const perUserLimit = Math.max(1, Number(codeRow.per_user_limit || 1));
       if (userClaimCount >= perUserLimit) {
-        const msg = `Anda telah mencapai batas klaim (${perUserLimit}x) untuk kode ${upperCode}.`;
+        const msg = `Kamu udah nyampe batas klaim (${perUserLimit}x) buat kode ${upperCode}.`;
         logClaimAttempt({
           code: upperCode,
           codeName: codeRow.name,

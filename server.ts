@@ -23,7 +23,7 @@ import {
   verifySessionToken,
 } from './src/server/db';
 import { expireStaleSessions, getMaxQuizWrongAttempts, startGameSession, submitGameAction } from './src/server/gameEngine';
-import { whatsappEngine } from './src/server/whatsappEngine';
+import { validatePairingPhoneNumber, whatsappEngine } from './src/server/whatsappEngine';
 import { JKT48_TEAM_GROUPS } from './src/core/jkt48Classification';
 import {
   createRedeemCode,
@@ -61,6 +61,7 @@ import {
   updateMediaJobDelivery,
 } from './src/server/mediaService';
 import { buildMotionPhotoProtoPair, buildSoundStickerProtoPayload } from './src/server/waMediaProtocol';
+import { listMenuFallbackLogs } from './src/server/menuService';
 
 const PORT = Number(process.env.PORT) || 3000;
 const FILES_BASE_DIR = path.resolve(process.cwd(), 'data', 'files');
@@ -329,7 +330,7 @@ async function startServer() {
 
     const era = eras.find((e) => e.id === levelId);
     if (!era) {
-      return res.status(404).json({ ok: false, error: 'Level era JKT48 tidak ditemukan.' });
+      return res.status(404).json({ ok: false, error: 'Level era JKT48 nggak ketemu.' });
     }
 
     let members = db
@@ -409,7 +410,7 @@ async function startServer() {
 
     if (groupId && !teamId) {
       const grp = JKT48_TEAM_GROUPS.find((g) => g.id === groupId);
-      if (!grp) return res.status(404).json({ ok: false, error: 'Kategori group team tidak ditemukan.' });
+      if (!grp) return res.status(404).json({ ok: false, error: 'Kategori group team nggak ketemu.' });
       const teams = allTeams
         .filter((t) => t.team_group === groupId)
         .map((t) => {
@@ -424,7 +425,7 @@ async function startServer() {
     }
 
     const team = allTeams.find((t) => t.id === teamId);
-    if (!team) return res.status(404).json({ ok: false, error: 'Team JKT48 tidak ditemukan.' });
+    if (!team) return res.status(404).json({ ok: false, error: 'Team JKT48 nggak ketemu.' });
 
     let rows = db
       .prepare(`
@@ -612,7 +613,7 @@ async function startServer() {
   app.post('/api/auth/claim', rateLimit(10), (req, res) => {
     const authState = isOwnerAuthConfigured();
     if (authState.hasEnvPasscode || authState.hasClaimedHash) {
-      return res.status(403).json({ ok: false, error: 'Akses owner sudah diklaim. Silakan login.' });
+      return res.status(403).json({ ok: false, error: 'Akses owner udah diklaim. Login aja ya.' });
     }
     const passcode = String(req.body?.passcode || '');
     if (passcode.length < 6) {
@@ -773,24 +774,112 @@ async function startServer() {
 
   // WhatsApp Connection & Simulator
   app.get('/api/admin/whatsapp/status', (_req, res) => {
-    res.json({ ok: true, status: whatsappEngine.getStatus() });
+    res.json({
+      ok: true,
+      status: whatsappEngine.getStatus(),
+      history: whatsappEngine.listConnectionHistory(30),
+    });
   });
 
-  app.post('/api/admin/whatsapp/connect', async (_req, res) => {
-    const result = await whatsappEngine.connect();
-    addAuditLog('owner', 'whatsapp.connect', 'primary');
+  app.get('/api/admin/whatsapp/history', (req, res) => {
+    const rawLimit = Number(req.query.limit ?? 50);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(1, Math.floor(rawLimit)), 200) : 50;
+    res.json({ ok: true, history: whatsappEngine.listConnectionHistory(limit) });
+  });
+
+  app.post('/api/admin/whatsapp/connect', async (req, res) => {
+    const method = req.body?.method === 'pairing_code' ? 'pairing_code' : 'qr';
+    const phoneNumber = typeof req.body?.phoneNumber === 'string' ? req.body.phoneNumber : undefined;
+    const result = await whatsappEngine.connect({ method, phoneNumber, actor: 'owner' });
+    addAuditLog('owner', 'whatsapp.connect', method, {
+      ok: result.ok,
+      targetMasked: phoneNumber ? maskPhoneNumberForGroup(phoneNumber) : null,
+    });
+    if (!result.ok) {
+      const code =
+        result.status === 'connected' || result.message.includes('lagi berjalan') || result.message.includes('menunggu')
+          ? 409
+          : 400;
+      return res.status(code).json({ ...result, error: result.message });
+    }
+    res.json(result);
+  });
+
+  app.post('/api/admin/whatsapp/pairing', async (req, res) => {
+    const phoneNumber = typeof req.body?.phoneNumber === 'string' ? req.body.phoneNumber.trim() : '';
+    if (!phoneNumber) {
+      const msg = 'Masukin nomor WhatsApp dulu ya (pakai kode negara, misal 6281234567890).';
+      return res.status(400).json({ ok: false, error: msg, message: msg });
+    }
+    const validation = validatePairingPhoneNumber(phoneNumber);
+    const result = await whatsappEngine.connect({
+      method: 'pairing_code',
+      phoneNumber,
+      actor: 'owner',
+    });
+    addAuditLog('owner', 'whatsapp.pairing', validation.normalized ? maskPhoneNumberForGroup(validation.normalized) : 'invalid', {
+      ok: result.ok,
+      pairingStatus: result.pairingStatus,
+    });
+    if (!result.ok) {
+      const code =
+        result.status === 'connected' || result.message.includes('lagi berjalan') || result.message.includes('menunggu')
+          ? 409
+          : 400;
+      return res.status(code).json({ ...result, error: result.message });
+    }
+    res.json(result);
+  });
+
+  app.post('/api/admin/whatsapp/pairing/cancel', async (_req, res) => {
+    const result = await whatsappEngine.cancelPairing('owner');
+    addAuditLog('owner', 'whatsapp.pairing_cancel', 'primary', { ok: result.ok });
+    if (!result.ok) {
+      return res.status(409).json({ ...result, error: result.message });
+    }
     res.json(result);
   });
 
   app.post('/api/admin/whatsapp/disconnect', async (_req, res) => {
-    const result = await whatsappEngine.disconnect();
-    addAuditLog('owner', 'whatsapp.disconnect', 'primary');
+    const result = await whatsappEngine.disconnect('owner');
+    addAuditLog('owner', 'whatsapp.disconnect', 'primary', { ok: result.ok });
+    if (!result.ok) {
+      return res.status(409).json({ ...result, error: result.message });
+    }
+    res.json(result);
+  });
+
+  app.post('/api/admin/whatsapp/reset-connection', async (_req, res) => {
+    const result = await whatsappEngine.resetConnection('owner');
+    addAuditLog('owner', 'whatsapp.reset_connection', 'primary', {
+      ok: result.ok,
+      hasStoredAuth: result.hasStoredAuth,
+    });
+    if (!result.ok) {
+      const code = result.message.includes('lagi berjalan') ? 409 : 400;
+      return res.status(code).json({ ...result, error: result.message });
+    }
+    res.json(result);
+  });
+
+  app.post('/api/admin/whatsapp/reset-session', async (req, res) => {
+    if (req.body?.confirm !== true) {
+      const msg = 'Konfirmasi tambahan wajib dicentang sebelum reset sesi penuh ya.';
+      return res.status(400).json({ ok: false, error: msg, message: msg });
+    }
+    const result = await whatsappEngine.resetFullSession({ confirm: true, actor: 'owner' });
+    addAuditLog('owner', 'whatsapp.reset_session', 'primary', { ok: result.ok });
+    if (!result.ok) {
+      const code = result.message.includes('lagi berjalan') ? 409 : 400;
+      return res.status(code).json({ ...result, error: result.message });
+    }
     res.json(result);
   });
 
   app.post('/api/admin/whatsapp/simulate', express.json({ limit: '15mb' }), async (req, res) => {
     const {
       text,
+      selectedRowId,
       chatScope,
       chatId,
       groupName,
@@ -805,7 +894,7 @@ async function startServer() {
       attachedAudioBase64,
       messageId,
     } = req.body ?? {};
-    if (!text || typeof text !== 'string') {
+    if ((!text || typeof text !== 'string') && (typeof selectedRowId !== 'string' || !selectedRowId.trim())) {
       return res.status(400).json({ ok: false, error: 'Teks pesan wajib diisi.' });
     }
     const scope = chatScope === 'group' ? 'group' : 'private';
@@ -821,7 +910,8 @@ async function startServer() {
       groupName: scope === 'group' ? String(groupName || 'Komunitas Theater JKT48 ID') : undefined,
       senderPhone: phone,
       senderName: String(senderName || 'Owner Simulator'),
-      text,
+      text: typeof text === 'string' ? text : '',
+      selectedRowId: typeof selectedRowId === 'string' && selectedRowId.trim() ? selectedRowId.trim() : undefined,
       isGroupAdmin: Boolean(isGroupAdmin ?? true),
       mentions: Array.isArray(mentions) ? mentions.map((m) => String(m)) : undefined,
       quotedSenderPhone: quotedSenderPhone ? String(quotedSenderPhone) : undefined,
@@ -839,6 +929,10 @@ async function startServer() {
       source: 'simulator',
     });
     res.json({ ok: true, result });
+  });
+
+  app.get('/api/admin/menus/fallbacks', (_req, res) => {
+    res.json({ ok: true, logs: listMenuFallbackLogs(50) });
   });
 
   // Media Lab (#tolive & #sa) Real Pipeline Testing & Job Logs
@@ -1143,7 +1237,7 @@ async function startServer() {
 
   app.get('/api/admin/redeems/:code', (req, res) => {
     const detail = getRedeemDetail(req.params.code);
-    if (!detail.code) return res.status(404).json({ ok: false, error: 'Kode redeem tidak ditemukan.' });
+    if (!detail.code) return res.status(404).json({ ok: false, error: 'Kode redeem-nya nggak ketemu.' });
     return res.json({ ok: true, ...detail });
   });
 
@@ -1283,7 +1377,7 @@ async function startServer() {
       proposed_payload_json: string; source_title: string; source_url: string; retrieved_at: string;
     } | undefined;
 
-    if (!ver) return res.status(404).json({ ok: false, error: 'Item verifikasi tidak ditemukan.' });
+    if (!ver) return res.status(404).json({ ok: false, error: 'Item verifikasi nggak ketemu.' });
 
     const approved = decision === 'approve';
     db.transaction(() => {
@@ -1463,7 +1557,7 @@ async function startServer() {
 
   app.get('/api/admin/files/:filename', (req, res) => {
     const targetPath = safeResolveInBase(FILES_BASE_DIR, req.params.filename);
-    if (!targetPath || !fs.existsSync(targetPath)) return res.status(404).json({ ok: false, error: 'File tidak ditemukan.' });
+    if (!targetPath || !fs.existsSync(targetPath)) return res.status(404).json({ ok: false, error: 'File-nya nggak ketemu.' });
     const content = fs.readFileSync(targetPath, 'utf8');
     res.json({ ok: true, filename: path.basename(targetPath), content });
   });
@@ -1542,6 +1636,7 @@ async function startServer() {
     }
     const allowedKeys = new Set([
       'default_language',
+      'language_style',
       'default_theme',
       'blue_tick_enabled',
       'maintenance_mode',
@@ -1550,11 +1645,14 @@ async function startServer() {
       'multi_room_concurrent',
       'owner_number_configured',
     ]);
-    const stmt = db.prepare(`UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = ?`);
+    const stmt = db.prepare(
+      `INSERT INTO settings (key, value, is_secret, updated_at) VALUES (?, ?, 0, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+    );
     db.transaction(() => {
       for (const [k, v] of Object.entries(updates)) {
         if (allowedKeys.has(k)) {
-          stmt.run(String(v), k);
+          stmt.run(k, String(v));
           addAuditLog('owner', 'settings.update', k, { value: k === 'owner_number_configured' ? '[redacted]' : v });
         }
       }

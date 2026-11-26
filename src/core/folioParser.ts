@@ -13,16 +13,16 @@ export interface FolioDocument {
 }
 
 export const FOLIO_GUIDE_ID = [
-  'Panduan Format Kertas Folio (.folio):',
-  '- {judul} Teks : Membuat judul utama rata tengah dan tebal',
+  'Cara Pakai Format Kertas Folio (.folio):',
+  '- {judul} Teks : Bikin judul utama rata tengah & tebal',
   '- {tengah} Teks : Rata tengah',
-  '- {kiri} Teks : Rata kiri (default paragraf)',
-  '- {kanan} Teks : Rata kanan (tanggal, hormat saya, tanda tangan)',
-  '- {tebal} Teks : Teks tebal',
-  '- {miring} Teks : Teks miring',
-  '- {baris1} / {baris2} / {baris3} : Menyisipkan 1, 2, atau 3 baris kosong',
+  '- {kiri} Teks : Rata kiri (bawaan paragraf)',
+  '- {kanan} Teks : Rata kanan (tanggal, salam penutup, tanda tangan)',
+  '- {tebal} Teks : Bikin teks tebal',
+  '- {miring} Teks : Bikin teks miring',
+  '- {baris1} / {baris2} / {baris3} : Tambah 1, 2, atau 3 baris kosong',
   '',
-  'Contoh:',
+  'Contohnya:',
   '.folio {tengah}JUDUL SKRIPSI',
   '{baris2}',
   'Isi paragraf pertama.',
@@ -30,7 +30,7 @@ export const FOLIO_GUIDE_ID = [
   '{baris1}',
   '{kanan}Hormat saya,',
   '{baris3}',
-  '{kanan}Nama User',
+  '{kanan}Nama Kamu',
 ].join('\n');
 
 export function parseFolioText(input: string): FolioDocument {

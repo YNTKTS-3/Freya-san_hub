@@ -31,6 +31,12 @@ import { CommandAuditRow } from '../core/types';
 import { RedeemManagementPanel } from './RedeemManagementPanel';
 import { AbusePreventionPanel } from './AbusePreventionPanel';
 import { EconomyLimitPanel } from './EconomyLimitPanel';
+import {
+  WaConnectionHistoryItem,
+  WaStatusSnapshot,
+  WhatsAppConnectionHistoryCard,
+  WhatsAppConnectionPanel,
+} from './WhatsAppConnectionPanel';
 
 type DashboardModule =
   | 'overview'
@@ -90,10 +96,12 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
   // Module states
   const [overview, setOverview] = useState<Record<string, any> | null>(null);
   const [liveChats, setLiveChats] = useState<Array<Record<string, any>>>([]);
-  const [waStatus, setWaStatus] = useState<Record<string, any> | null>(null);
+  const [waStatus, setWaStatus] = useState<WaStatusSnapshot | null>(null);
+  const [waHistory, setWaHistory] = useState<WaConnectionHistoryItem[]>([]);
   const [simScope, setSimScope] = useState<'private' | 'group'>('private');
   const [simText, setSimText] = useState('.menu');
   const [simResult, setSimResult] = useState<Record<string, any> | null>(null);
+  const [menuFallbacks, setMenuFallbacks] = useState<Array<Record<string, any>>>([]);
   const [mediaLabLoading, setMediaLabLoading] = useState<string | null>(null);
   const [mediaLabError, setMediaLabError] = useState<string | null>(null);
   const [toliveLabRes, setToliveLabRes] = useState<Record<string, any> | null>(null);
@@ -179,6 +187,11 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
       try {
         const msg = JSON.parse(ev.data);
         if (msg.eventType === 'wa:status') setWaStatus(msg.payload);
+        if (msg.eventType === 'wa:history') {
+          void apiFetch('/api/admin/whatsapp/history?limit=30').then((h) => {
+            if (h?.ok && Array.isArray(h.history)) setWaHistory(h.history);
+          });
+        }
         if (msg.eventType === 'chat:message') {
           setLiveChats((prev) => [msg.payload, ...prev].slice(0, 80));
         }
@@ -195,12 +208,17 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
       const d = await apiFetch('/api/admin/overview');
       if (d.ok) setOverview(d);
     } else if (mod === 'whatsapp') {
-      const [d, jobsRes] = await Promise.all([
+      const [d, jobsRes, fbRes] = await Promise.all([
         apiFetch('/api/admin/whatsapp/status'),
         apiFetch('/api/admin/media/jobs'),
+        apiFetch('/api/admin/menus/fallbacks'),
       ]);
-      if (d.ok) setWaStatus(d.status);
+      if (d.ok) {
+        setWaStatus(d.status);
+        if (Array.isArray(d.history)) setWaHistory(d.history);
+      }
       if (jobsRes.ok) setMediaJobs(jobsRes.jobs || []);
+      if (fbRes.ok) setMenuFallbacks(fbRes.logs || []);
     } else if (mod === 'commands') {
       const d = await apiFetch('/api/admin/commands');
       if (d.ok) { setCommands(d.commands); setAuditRows(d.audit); }
@@ -243,6 +261,25 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
   useEffect(() => {
     void loadModuleData(activeModule);
   }, [token, activeModule, gameScopeFilter, gameSearch]);
+
+  useEffect(() => {
+    if (!token || activeModule !== 'whatsapp') return;
+    const activePairingOrConnect =
+      waStatus?.status === 'connecting' ||
+      waStatus?.status === 'qr_ready' ||
+      waStatus?.pairingStatus === 'waiting' ||
+      waStatus?.pairingStatus === 'code_ready';
+    if (!activePairingOrConnect) return;
+    const timer = setInterval(() => {
+      void apiFetch('/api/admin/whatsapp/status').then((d) => {
+        if (d?.ok) {
+          setWaStatus(d.status);
+          if (Array.isArray(d.history)) setWaHistory(d.history);
+        }
+      });
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [token, activeModule, waStatus?.status, waStatus?.pairingStatus]);
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -289,8 +326,8 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
             </h1>
             <p className="text-sm text-slate-600 dark:text-slate-300">
               {authStatus?.needsFirstRunClaim
-                ? 'Passcode owner belum disetel pada server. Buat passcode minimal 6 karakter untuk mengamankan seluruh modul admin dan nomor privat owner.'
-                : 'Masukkan passcode owner untuk mengakses Command Manager, WhatsApp Engine, Game Activity, dan 48Group Approval.'}
+                ? 'Passcode owner belum disetel di server. Bikin passcode minimal 6 karakter buat ngamanin seluruh modul admin dan nomor privat owner.'
+                : 'Masukin passcode owner buat akses Command Manager, WhatsApp Engine, Game Activity, dan 48Group Approval.'}
             </p>
           </div>
 
@@ -529,48 +566,13 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
           {/* 3. WHATSAPP CONNECTION, SIMULATOR & MEDIA LAB (#tolive / #sa) */}
           {activeModule === 'whatsapp' && (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
-                  <h2 className="text-base font-bold text-slate-900 dark:text-white">Connection Manager (@whiskeysockets/baileys)</h2>
-                  <div className="text-sm space-y-1 text-slate-600 dark:text-slate-300">
-                    <div>Status Koneksi: <span className="font-mono font-semibold text-blue-700 dark:text-blue-400">{waStatus?.status ?? 'disconnected'}</span></div>
-                    <div>Nomor Terhubung: <span className="font-mono">{waStatus?.phoneNumber || 'Belum tertaut'}</span></div>
-                    <div>Antrean Pesan: <span className="font-mono">{waStatus?.queueLength ?? 0}</span></div>
-                    <div>Blue Tick Control: <span className="font-mono">{waStatus?.blueTickEnabled ? 'ON' : 'OFF'}</span></div>
-                  </div>
-                  {waStatus?.qrDataUrl && (
-                    <div className="p-4 bg-white rounded-xl border border-slate-200 w-fit">
-                      <img src={waStatus.qrDataUrl} alt="QR Login WhatsApp" className="w-56 h-56" />
-                    </div>
-                  )}
-                  {waStatus?.lastError && (
-                    <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
-                      Catatan Koneksi: {waStatus.lastError}
-                    </div>
-                  )}
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await apiFetch('/api/admin/whatsapp/connect', { method: 'POST' });
-                        void loadModuleData('whatsapp');
-                      }}
-                      className="px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold"
-                    >
-                      Hubungkan / Tampilkan QR
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await apiFetch('/api/admin/whatsapp/disconnect', { method: 'POST' });
-                        void loadModuleData('whatsapp');
-                      }}
-                      className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold"
-                    >
-                      Putuskan Koneksi
-                    </button>
-                  </div>
-                </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                <WhatsAppConnectionPanel
+                  waStatus={waStatus}
+                  waHistory={waHistory}
+                  apiFetch={apiFetch}
+                  onRefresh={() => loadModuleData('whatsapp')}
+                />
 
                 <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
                   <h2 className="text-base font-bold text-slate-900 dark:text-white">WhatsApp Command & Interactive Menu Tester</h2>
@@ -665,34 +667,117 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
                         </div>
                       )}
                       {simResult.interactiveMenu && (
-                        <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 space-y-2">
-                          <div className="text-xs font-bold">{simResult.interactiveMenu.title} — Interactive List</div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                            {simResult.interactiveMenu.sections[0]?.rows.map((r: any) => (
-                              <button
-                                key={r.id}
-                                type="button"
-                                onClick={async () => {
-                                  setSimText(r.command);
-                                  const d = await apiFetch('/api/admin/whatsapp/simulate', {
-                                    method: 'POST',
-                                    body: JSON.stringify({ text: r.command, chatScope: simScope }),
-                                  });
-                                  if (d.ok) setSimResult(d.result);
-                                }}
-                                className="p-2 text-left rounded border border-slate-200 dark:border-slate-800 hover:border-blue-600 text-xs"
-                              >
-                                <div className="font-semibold text-blue-700 dark:text-blue-400">{r.title}</div>
-                                <div className="text-slate-500 truncate">{r.description}</div>
-                              </button>
-                            ))}
+                        <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-xs font-bold text-slate-900 dark:text-white">
+                              {simResult.interactiveMenu.title} — Interactive List ({simResult.interactiveMenu.buttonText || 'Pilih Menu'})
+                            </div>
+                            <span className="text-[11px] font-mono text-slate-500">
+                              {simResult.interactiveMenu.footer || 'Freya-san bot by Pak Ujan'}
+                            </span>
                           </div>
+                          {(() => {
+                            let runningIndex = 0;
+                            const sections = Array.isArray(simResult.interactiveMenu.sections)
+                              ? simResult.interactiveMenu.sections
+                              : [];
+                            return sections.map((sec: any, secIdx: number) => (
+                              <div key={`${sec.title}-${secIdx}`} className="space-y-1.5">
+                                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                                  {sec.title}
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                  {(sec.rows || []).map((r: any) => {
+                                    runningIndex += 1;
+                                    const rowNum = runningIndex;
+                                    return (
+                                      <button
+                                        key={r.id}
+                                        type="button"
+                                        onClick={async () => {
+                                          setSimText(r.command || String(rowNum));
+                                          const d = await apiFetch('/api/admin/whatsapp/simulate', {
+                                            method: 'POST',
+                                            body: JSON.stringify({
+                                              text: r.command || String(rowNum),
+                                              selectedRowId: r.id,
+                                              chatScope: simScope,
+                                            }),
+                                          });
+                                          if (d.ok) setSimResult(d.result);
+                                          const fbRes = await apiFetch('/api/admin/menus/fallbacks');
+                                          if (fbRes.ok) setMenuFallbacks(fbRes.logs || []);
+                                        }}
+                                        className="p-2 text-left rounded border border-slate-200 dark:border-slate-800 hover:border-blue-600 text-xs transition-colors"
+                                      >
+                                        <div className="flex items-center justify-between gap-2">
+                                          <span className="font-semibold text-blue-700 dark:text-blue-400 truncate">
+                                            {rowNum}. {r.title}
+                                          </span>
+                                          {r.permission && r.permission !== 'public' && (
+                                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 shrink-0">
+                                              {String(r.permission).toUpperCase()}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="text-slate-500 truncate">{r.description}</div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ));
+                          })()}
                         </div>
                       )}
                     </div>
                   )}
+
+                  {/* Log Fallback Interactive Menu */}
+                  <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-xs font-bold text-slate-900 dark:text-white">
+                          Log Fallback Interactive Menu
+                        </h3>
+                        <p className="text-[11px] text-slate-500">
+                          Catat pengiriman fallback teks bernomor saat native list nggak didukung atau mode simulator aktif.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const fbRes = await apiFetch('/api/admin/menus/fallbacks');
+                          if (fbRes.ok) setMenuFallbacks(fbRes.logs || []);
+                        }}
+                        className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 text-[11px] font-semibold inline-flex items-center gap-1"
+                      >
+                        <RefreshCw className="w-3 h-3" /> Refresh
+                      </button>
+                    </div>
+                    {menuFallbacks.length === 0 ? (
+                      <div className="text-xs text-slate-500 py-2">Belum ada catatan fallback menu terbaru.</div>
+                    ) : (
+                      <div className="max-h-44 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/60 text-xs">
+                        {menuFallbacks.slice(0, 15).map((fb: any) => (
+                          <div key={fb.id} className="px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className="font-mono font-semibold text-blue-700 dark:text-blue-400">{fb.menu_key}</span>
+                              <span className="text-slate-500"> · {fb.mode} · {fb.reason}</span>
+                            </div>
+                            <span className="text-[11px] font-mono text-slate-400">{fb.created_at}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
+
+              <WhatsAppConnectionHistoryCard
+                waHistory={waHistory}
+                onRefresh={() => loadModuleData('whatsapp')}
+              />
 
               {/* MEDIA LAB: #tolive & #stickeraudio / #sa */}
               <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-5">
@@ -1944,7 +2029,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
                           {s.key === 'blue_tick_enabled'
                             ? 'Blue Tick Control WhatsApp (centang biru read receipt)'
                             : s.key === 'maintenance_mode'
-                            ? 'Mode Pemeliharaan (hanya owner yang dapat memakai bot)'
+                            ? 'Mode Pemeliharaan (cuma owner yang bisa pakai bot)'
                             : s.key === 'auto_nexara'
                             ? 'Auto-reply AI Nexara terkonfigurasi'
                             : s.key === 'antidelete_pc'
@@ -1968,6 +2053,55 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
                       </button>
                     </div>
                   ))}
+
+                <div className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2.5 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="font-bold text-slate-900 dark:text-white">Bahasa & Gaya Bot (v5.0.3)</div>
+                      <div className="text-slate-500">
+                        Bahasa Indonesia pakai gaya santai nonbaku secara default di seluruh balasan & menu WhatsApp.
+                      </div>
+                    </div>
+                    <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
+                      {settingsList.find((s) => s.key === 'language_style')?.value || 'santai_nonbaku'}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { code: 'id', label: 'Indonesia (Santai Nonbaku)' },
+                      { code: 'en', label: 'English (Natural)' },
+                      { code: 'ja', label: '日本語 (Natural)' },
+                    ].map((langOpt) => {
+                      const currentLang = settingsList.find((s) => s.key === 'default_language')?.value || 'id';
+                      const isActive = currentLang === langOpt.code;
+                      return (
+                        <button
+                          key={langOpt.code}
+                          type="button"
+                          onClick={async () => {
+                            await apiFetch('/api/admin/settings', {
+                              method: 'PATCH',
+                              body: JSON.stringify({
+                                updates: {
+                                  default_language: langOpt.code,
+                                  language_style: 'santai_nonbaku',
+                                },
+                              }),
+                            });
+                            void loadModuleData('backups_settings');
+                          }}
+                          className={`px-3 py-1.5 rounded-lg font-semibold border transition-colors ${
+                            isActive
+                              ? 'border-blue-600 bg-blue-700 text-white'
+                              : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-500'
+                          }`}
+                        >
+                          {langOpt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
 
               <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">

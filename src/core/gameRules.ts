@@ -456,7 +456,7 @@ export function canStartSessionInChat(
   if (active) {
     return {
       allowed: false,
-      reason: 'Masih ada sesi permainan aktif di percakapan ini. Selesaikan atau batalkan sesi sebelumnya terlebih dahulu.',
+      reason: 'Masih ada sesi game yang lagi jalan di chat ini. Selesaiin atau batalin dulu sesi sebelumnya ya.',
     };
   }
   return { allowed: true };

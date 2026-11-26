@@ -4,12 +4,12 @@ export const REWARD_REGISTRY: RewardRegistryEntry[] = [
   {
     id: 'daily_limit_bonus',
     name: 'Bonus Limit Harian',
-    description: 'Menambahkan kuota limit command harian pada akun pengguna secara permanen.',
+    description: 'Nambahin kuota limit command harian di akun kamu secara permanen.',
     category: 'utility',
     handlerKey: 'apply_daily_limit_bonus',
     hasRealHandler: true,
     version: '1.0.0',
-    terms: 'Nilai antara 1 sampai 200 limit tambahan per klaim.',
+    terms: 'Nilainya antara 1 sampai 200 limit tambahan per klaim.',
     paramsSchema: [
       {
         key: 'amount',
@@ -25,7 +25,7 @@ export const REWARD_REGISTRY: RewardRegistryEntry[] = [
   {
     id: 'premium_access',
     name: 'Status Akses Premium',
-    description: 'Mengaktifkan status pengguna premium beserta masa berlaku hari pada tabel langganan.',
+    description: 'Ngaktifin status akun premium beserta masa aktif harinya.',
     category: 'membership',
     handlerKey: 'apply_premium_days',
     hasRealHandler: true,
@@ -46,7 +46,7 @@ export const REWARD_REGISTRY: RewardRegistryEntry[] = [
   {
     id: 'badge_reward',
     name: 'Badge / Achievement Koleksi',
-    description: 'Memberikan badge resmi ke profil pencapaian pengguna (tabel achievements).',
+    description: 'Kasih badge resmi ke profil pencapaian kamu.',
     category: 'achievement',
     handlerKey: 'grant_profile_badge',
     hasRealHandler: true,
@@ -74,12 +74,12 @@ export const REWARD_REGISTRY: RewardRegistryEntry[] = [
   {
     id: 'streak_boost',
     name: 'Tambahan Streak Harian',
-    description: 'Menambahkan poin streak aktivitas harian akun pengguna.',
+    description: 'Nambahin poin streak aktivitas harian di akun kamu.',
     category: 'economy',
     handlerKey: 'apply_streak_boost',
     hasRealHandler: true,
     version: '1.0.0',
-    terms: 'Nilai antara 1 sampai 30 hari streak.',
+    terms: 'Nilainya antara 1 sampai 30 hari streak.',
     paramsSchema: [
       {
         key: 'days',
@@ -95,12 +95,12 @@ export const REWARD_REGISTRY: RewardRegistryEntry[] = [
   {
     id: 'physical_merch_voucher',
     name: 'Voucher Merchandise Fisik (Belum Tersedia)',
-    description: 'Memerlukan integrasi sistem inventaris & pengiriman eksternal yang belum terpasang.',
+    description: 'Butuh integrasi sistem stok & pengiriman eksternal yang belum terpasang.',
     category: 'utility',
     handlerKey: 'unimplemented_merch_handler',
     hasRealHandler: false,
     version: '0.0.0',
-    terms: 'Tidak tersedia untuk pemilihan aktif.',
+    terms: 'Belum bisa dipilih buat dipakai aktif.',
     paramsSchema: [],
   },
 ];
@@ -129,24 +129,24 @@ export function validateAdditionalReward(
 ): { ok: true; normalized: ConfiguredAdditionalReward } | { ok: false; error: string } {
   const entry = REWARD_REGISTRY.find((r) => r.id === item.rewardId);
   if (!entry) {
-    return { ok: false, error: `Jenis reward "${item.rewardId}" tidak terdaftar di reward registry.` };
+    return { ok: false, error: `Jenis reward "${item.rewardId}" nggak ketemu di reward registry.` };
   }
   if (!entry.hasRealHandler) {
-    return { ok: false, error: `Reward "${entry.name}" belum memiliki handler aktif dan tidak dapat digunakan.` };
+    return { ok: false, error: `Reward "${entry.name}" belum punya handler aktif jadi belum bisa dipakai.` };
   }
 
   const normalizedParams: Record<string, string | number> = {};
   for (const spec of entry.paramsSchema) {
     const raw = item.params?.[spec.key];
     if (spec.required && (raw === undefined || raw === null || String(raw).trim() === '')) {
-      return { ok: false, error: `Parameter "${spec.label}" wajib diisi untuk reward ${entry.name}.` };
+      return { ok: false, error: `Parameter "${spec.label}" wajib diisi buat reward ${entry.name}.` };
     }
     if (raw === undefined || raw === null || String(raw).trim() === '') continue;
 
     if (spec.type === 'number') {
       const n = Number(raw);
       if (!Number.isFinite(n) || !Number.isInteger(n)) {
-        return { ok: false, error: `Parameter "${spec.label}" harus berupa bilangan bulat.` };
+        return { ok: false, error: `Parameter "${spec.label}" harus berupa angka bulat ya.` };
       }
       if (spec.min !== undefined && n < spec.min) {
         return { ok: false, error: `Parameter "${spec.label}" minimal ${spec.min}.` };
@@ -181,23 +181,23 @@ export function validateRedeemConfiguration(
   const exp = Number(input.rewardExp ?? 0);
   const level = Number(input.rewardLevel ?? 0);
   if (!Number.isInteger(balance) || balance < 0 || balance > caps.maxBalance) {
-    return { ok: false, error: `Reward Balance harus bilangan bulat 0–${caps.maxBalance}.` };
+    return { ok: false, error: `Reward Balance harus angka bulat 0–${caps.maxBalance}.` };
   }
   if (!Number.isInteger(exp) || exp < 0 || exp > caps.maxExp) {
-    return { ok: false, error: `Reward EXP harus bilangan bulat 0–${caps.maxExp}.` };
+    return { ok: false, error: `Reward EXP harus angka bulat 0–${caps.maxExp}.` };
   }
   if (!Number.isInteger(level) || level < 0 || level > caps.maxLevel) {
-    return { ok: false, error: `Reward Level harus bilangan bulat 0–${caps.maxLevel}.` };
+    return { ok: false, error: `Reward Level harus angka bulat 0–${caps.maxLevel}.` };
   }
 
   const maxClaims = Number(input.maxClaims ?? 10);
   const perUserLimit = Number(input.perUserLimit ?? 1);
   const cooldownSec = Number(input.cooldownSec ?? 0);
   if (!Number.isInteger(maxClaims) || maxClaims < 0) {
-    return { ok: false, error: 'Batas total klaim harus >= 0 (0 berarti tanpa batas).' };
+    return { ok: false, error: 'Batas total klaim harus >= 0 (0 artinya tanpa batas).' };
   }
   if (!Number.isInteger(perUserLimit) || perUserLimit < 1) {
-    return { ok: false, error: 'Batas klaim per pengguna minimal 1.' };
+    return { ok: false, error: 'Batas klaim per user minimal 1 ya.' };
   }
   if (!Number.isInteger(cooldownSec) || cooldownSec < 0) {
     return { ok: false, error: 'Cooldown harus >= 0 detik.' };
@@ -206,7 +206,7 @@ export function validateRedeemConfiguration(
   if (input.expiresAt) {
     const t = new Date(input.expiresAt).getTime();
     if (Number.isNaN(t)) {
-      return { ok: false, error: 'Format tanggal kedaluwarsa tidak valid.' };
+      return { ok: false, error: 'Format tanggal kedaluwarsanya nggak valid.' };
     }
   }
 
@@ -219,7 +219,7 @@ export function validateRedeemConfiguration(
   }
 
   if (balance === 0 && exp === 0 && level === 0 && normalizedAdditional.length === 0) {
-    return { ok: false, error: 'Minimal satu reward utama (Balance/EXP/Level) atau reward tambahan harus bernilai positif.' };
+    return { ok: false, error: 'Minimal satu reward utama (Balance/EXP/Level) atau reward tambahan harus diisi positif.' };
   }
 
   return { ok: true, normalizedAdditional };

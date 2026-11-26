@@ -75,9 +75,9 @@ export function runMigrations(): void {
       rent_expires_at TEXT,
       language TEXT NOT NULL DEFAULT 'id',
       welcome_enabled INTEGER NOT NULL DEFAULT 0,
-      welcome_text TEXT DEFAULT 'Selamat datang di grup!',
+      welcome_text TEXT DEFAULT 'Halo! Selamat datang di grup ya.',
       left_enabled INTEGER NOT NULL DEFAULT 0,
-      left_text TEXT DEFAULT 'Sampai jumpa!',
+      left_text TEXT DEFAULT 'Sampai ketemu lagi ya!',
       anti_settings_json TEXT NOT NULL DEFAULT '{}',
       game_mode_enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -914,12 +914,51 @@ export function runMigrations(): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS whatsapp_menu_sessions (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      user_phone TEXT NOT NULL,
+      chat_scope TEXT NOT NULL,
+      menu_key TEXT NOT NULL,
+      rows_json TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS menu_fallback_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT NOT NULL,
+      menu_key TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      client_info TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS wa_connection_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_type TEXT NOT NULL,
+      connection_method TEXT NOT NULL DEFAULT 'qr',
+      actor TEXT NOT NULL DEFAULT 'owner',
+      target_masked TEXT,
+      status TEXT NOT NULL DEFAULT 'ok',
+      detail TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_pair_streaks_users ON pair_streaks(user_a, user_b, status);
     CREATE INDEX IF NOT EXISTS idx_limit_tx_target ON limit_transactions(target_phone, created_at);
     CREATE INDEX IF NOT EXISTS idx_abuse_events_user ON abuse_events(user_phone, severity, created_at);
     CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id, user_phone);
     CREATE INDEX IF NOT EXISTS idx_media_jobs_cmd ON media_jobs(command, created_at);
+    CREATE INDEX IF NOT EXISTS idx_menu_sessions_chat ON whatsapp_menu_sessions(chat_id, user_phone, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_menu_fallbacks_time ON menu_fallback_logs(created_at);
+    CREATE INDEX IF NOT EXISTS idx_wa_conn_history_time ON wa_connection_history(created_at, id);
   `);
+
+  ensureColumn('bot_sessions', 'connection_method', `TEXT NOT NULL DEFAULT 'qr'`);
+  ensureColumn('bot_sessions', 'pairing_status', `TEXT NOT NULL DEFAULT 'idle'`);
+  ensureColumn('bot_sessions', 'pairing_expires_at', `TEXT`);
 }
 
 export function seedDatabase(): void {
@@ -931,6 +970,7 @@ export function seedDatabase(): void {
     ['project_version', process.env.PROJECT_VERSION || '5.0', 0],
     ['bot_name', process.env.BOT_NAME || 'Freya-san bot by Pak Ujan', 0],
     ['default_language', process.env.DEFAULT_LANGUAGE || 'id', 0],
+    ['language_style', 'santai_nonbaku', 0],
     ['default_theme', process.env.DEFAULT_THEME || 'system', 0],
     ['blue_tick_enabled', 'false', 0],
     ['maintenance_mode', 'false', 0],
@@ -943,10 +983,10 @@ export function seedDatabase(): void {
     ['redeem_max_exp_cap', '50000', 0],
     ['redeem_max_level_cap', '50', 0],
     ['redeem_default_per_user_limit', '1', 0],
-    ['redeem_msg_success', 'Kode {code} berhasil diklaim oleh {user}! Hadiah: {rewards}.', 0],
-    ['redeem_msg_expired', 'Kode redeem {code} sudah kedaluwarsa.', 0],
-    ['redeem_msg_limit', 'Kuota klaim untuk kode {code} sudah habis atau batas klaim Anda telah tercapai.', 0],
-    ['redeem_msg_invalid', 'Kode redeem {code} tidak ditemukan atau sedang nonaktif.', 0],
+    ['redeem_msg_success', 'Yeay! Kode *{code}* berhasil diklaim buat {user}! Hadiah: {rewards}.', 0],
+    ['redeem_msg_expired', 'Yah, masa berlaku kode *{code}* udah habis.', 0],
+    ['redeem_msg_limit', 'Kuota klaim buat kode *{code}* udah habis atau batas klaim kamu udah tercapai ya.', 0],
+    ['redeem_msg_invalid', 'Kode redeem *{code}* nggak ketemu atau lagi nonaktif.', 0],
     ['bot_timezone', 'Asia/Jakarta', 0],
     ['limit_initial_general', '50', 0],
     ['limit_price_per_unit', '25', 0],
@@ -1073,10 +1113,32 @@ export function seedDatabase(): void {
   })();
 
   db.prepare(`
+    UPDATE settings SET value = 'Yeay! Kode *{code}* berhasil diklaim buat {user}! Hadiah: {rewards}.'
+    WHERE key = 'redeem_msg_success' AND value = 'Kode {code} berhasil diklaim oleh {user}! Hadiah: {rewards}.'
+  `).run();
+  db.prepare(`
+    UPDATE settings SET value = 'Yah, masa berlaku kode *{code}* udah habis.'
+    WHERE key = 'redeem_msg_expired' AND value = 'Kode redeem {code} sudah kedaluwarsa.'
+  `).run();
+  db.prepare(`
+    UPDATE settings SET value = 'Kuota klaim buat kode *{code}* udah habis atau batas klaim kamu udah tercapai ya.'
+    WHERE key = 'redeem_msg_limit' AND value = 'Kuota klaim untuk kode {code} sudah habis atau batas klaim Anda telah tercapai.'
+  `).run();
+  db.prepare(`
+    UPDATE settings SET value = 'Kode redeem *{code}* nggak ketemu atau lagi nonaktif.'
+    WHERE key = 'redeem_msg_invalid' AND value = 'Kode redeem {code} tidak ditemukan atau sedang nonaktif.'
+  `).run();
+
+  db.prepare(`
     INSERT OR IGNORE INTO ai_providers (id, name, enabled, is_default, status, fallback_provider_id, system_prompt, persona_name)
     VALUES ('gemini-nexara', 'Nexara (Google Gemini)', 1, 1, 'ready', 'openai-compat',
-      'Anda adalah Freya-san AI (Nexara) di Freya-san Hub. Jawab akurat, sopan, dalam Bahasa Indonesia secara default, dan jangan pernah mengarang fakta 48Group yang tidak memiliki sumber resmi.',
+      'Kamu adalah Freya-san AI (Nexara) di Freya-san Hub. Jawab yang akurat, santai tapi tetap sopan pakai bahasa Indonesia sehari-hari yang natural, dan jangan pernah ngarang fakta 48Group tanpa sumber resmi.',
       'Freya-san AI')
+  `).run();
+  db.prepare(`
+    UPDATE ai_providers
+    SET system_prompt = 'Kamu adalah Freya-san AI (Nexara) di Freya-san Hub. Jawab yang akurat, santai tapi tetap sopan pakai bahasa Indonesia sehari-hari yang natural, dan jangan pernah ngarang fakta 48Group tanpa sumber resmi.'
+    WHERE id = 'gemini-nexara' AND system_prompt LIKE 'Anda adalah Freya-san AI%'
   `).run();
   db.prepare(`
     INSERT OR IGNORE INTO ai_providers (id, name, enabled, is_default, status, fallback_provider_id, system_prompt, persona_name)

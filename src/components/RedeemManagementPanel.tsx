@@ -560,7 +560,7 @@ export const RedeemManagementPanel: React.FC<RedeemManagementPanelProps> = ({ ap
                 {codes.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-8 text-center text-slate-500">
-                      Tidak ada kode redeem yang sesuai filter.
+                      Nggak ada kode redeem yang sesuai filter.
                     </td>
                   </tr>
                 ) : (
@@ -1084,10 +1084,10 @@ export const RedeemManagementPanel: React.FC<RedeemManagementPanelProps> = ({ ap
             <div className="space-y-5">
               <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-3">
                 <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                  Apakah Anda ingin menambahkan reward tambahan dari Reward Registry?
+                  Mau tambahin reward tambahan dari Reward Registry nggak?
                 </div>
                 <p className="text-xs text-slate-500">
-                  Hanya reward dengan handler aktif dan efek nyata ke database yang tersedia pada menu pemilihan ini. Reward yang belum memiliki handler dinonaktifkan otomatis.
+                  Cuma reward dengan handler aktif dan efek nyata ke database yang tersedia di menu ini. Reward yang belum punya handler dinonaktifkan otomatis.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -1316,7 +1316,7 @@ export const RedeemManagementPanel: React.FC<RedeemManagementPanelProps> = ({ ap
                 <div>
                   <div className="text-slate-500 mb-1">Reward Tambahan ({bAdditional.length})</div>
                   {bAdditional.length === 0 ? (
-                    <div className="text-slate-400">Tidak ada reward tambahan.</div>
+                    <div className="text-slate-400">Belum ada reward tambahan.</div>
                   ) : (
                     <ul className="list-disc pl-4 space-y-0.5 text-slate-700 dark:text-slate-300">
                       {bAdditional.map((item, idx) => (

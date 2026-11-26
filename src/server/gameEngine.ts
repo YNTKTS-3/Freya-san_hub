@@ -171,7 +171,7 @@ export function startGameSession(params: StartGameParams): GameStartResponse {
   if (!gameDef && !registryFallback) {
     return {
       ok: false,
-      announcement: `Permainan "${params.gameId}" tidak ditemukan di registry.`,
+      announcement: `Game "${params.gameId}" nggak ketemu di daftar.`,
       error: 'Game not found',
     };
   }
@@ -281,7 +281,7 @@ export function startGameSession(params: StartGameParams): GameStartResponse {
       board: Array(9).fill(''),
       currentTurn: 'X',
       mode: 'vs_bot',
-      prompt: 'Tic Tac Toe 3x3 dimulai! Anda bermain sebagai X. Pilih posisi 1-9.',
+      prompt: 'Tic Tac Toe 3x3 dimulai! Kamu main sebagai X. Pilih posisi 1-9 ya.',
     };
     promptText = 'Tic Tac Toe 3x3';
   } else if (params.gameId === 'suit') {
@@ -1117,7 +1117,7 @@ export function submitGameAction(params: {
         sessionId: session.id,
         answerStatus: 'ignored',
         scoreAwarded: 0,
-        announcement: 'Target vote tidak ditemukan di daftar pemain aktif.',
+        announcement: 'Target vote-nya nggak ketemu di daftar pemain aktif.',
         sessionStatus: 'active',
         state: sanitizeStateForClient(state),
       };
@@ -1455,7 +1455,7 @@ export function submitGameAction(params: {
             sessionId: session.id,
             answerStatus: 'wrong' as const,
             scoreAwarded: 0,
-            announcement: 'Target vote tidak ditemukan.',
+            announcement: 'Target vote-nya nggak ketemu nih.',
             sessionStatus: 'active' as const,
             state: sanitizeStateForClient(freshState),
           };
@@ -1552,7 +1552,7 @@ export function submitGameAction(params: {
       sessionId: session.id,
       answerStatus: 'ignored',
       scoreAwarded: 0,
-      announcement: 'Anda sudah mengirimkan jawaban pada sesi ini.',
+      announcement: 'Kamu udah kirim jawaban di sesi ini.',
       sessionStatus: session.status,
       state: sanitizeStateForClient(state),
     };

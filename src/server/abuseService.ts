@@ -268,7 +268,7 @@ export function checkUserAbuseGate(params: {
               ? 'Negative numbers are not allowed here. Please enter a positive amount.'
               : lang === 'ja'
               ? 'マイナスの数字は使えないよ。プラスの数字を入れてね。'
-              : 'Nilai negatif tidak diperbolehkan ya. Masukkan angka positif saja.',
+              : 'Angka minus nggak boleh dipakai ya. Masukin angka positif aja.',
         };
       }
     }
@@ -286,7 +286,7 @@ export function checkUserAbuseGate(params: {
       return {
         allowed: false,
         severity: 'confirmed_exploit',
-        reason: 'Input mengandung karakter yang tidak diizinkan.',
+        reason: 'Inputnya ada karakter yang nggak dibolehin ya.',
       };
     }
   }

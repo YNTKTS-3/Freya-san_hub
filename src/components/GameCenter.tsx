@@ -537,7 +537,7 @@ export const GameCenter: React.FC = () => {
                   </div>
                   {redeemOutcome.user && (
                     <div className="text-slate-500">
-                      Akun Anda Sekarang: {redeemOutcome.user.balance} Balance · Level {redeemOutcome.user.level} ({redeemOutcome.user.exp} EXP) · Limit {redeemOutcome.user.dailyLimit}/hari
+                      Akun Kamu Sekarang: {redeemOutcome.user.balance} Balance · Level {redeemOutcome.user.level} ({redeemOutcome.user.exp} EXP) · Limit {redeemOutcome.user.dailyLimit}/hari
                     </div>
                   )}
                 </div>

@@ -12,7 +12,7 @@ function mk(
     category,
     description:
       opts.description ??
-      `Perintah ${name} pada modul ${category.toLowerCase()} Freya-san Hub.`,
+      `Command ${name} di modul ${category.toLowerCase()} Freya-san Hub.`,
     example: opts.example ?? `.${name}`,
     permission:
       opts.permission ??
@@ -34,17 +34,17 @@ function mk(
 
 // 9.1 AI (11 commands)
 const AI_COMMANDS: CommandDefinition[] = [
-  mk('aiimage', 'AI', { description: 'Membuat gambar menggunakan AI image generator.', example: '.aiimage panggung biru modern', requiredProvider: 'gemini' }),
-  mk('aiimg', 'AI', { aliases: ['aimg'], description: 'Alias cepat pembuat gambar berbasis AI.', example: '.aiimg sunset tokyo', requiredProvider: 'gemini' }),
-  mk('byenexara', 'AI', { description: 'Menutup sesi percakapan aktif dengan AI Nexara.', example: '.byenexara', requiredProvider: 'gemini' }),
-  mk('byeopenai', 'AI', { description: 'Menutup sesi percakapan aktif dengan provider OpenAI.', example: '.byeopenai', requiredProvider: 'openai' }),
-  mk('editimg', 'AI', { description: 'Mengedit gambar lampiran berdasarkan instruksi teks.', example: '.editimg ubah latar menjadi biru', requiredProvider: 'gemini', status: 'pending_integration', hasRealHandler: false }),
-  mk('hitamkan', 'AI', { description: 'Filter penyesuaian tone warna gelap pada gambar.', example: '.hitamkan', requiredPlugin: 'media-processor', status: 'pending_integration', hasRealHandler: false }),
-  mk('jadianime', 'AI', { description: 'Mengubah potret menjadi ilustrasi bergaya anime.', example: '.jadianime', requiredProvider: 'gemini', status: 'pending_integration', hasRealHandler: false }),
-  mk('nexara', 'AI', { description: 'Berinteraksi dengan AI Nexara (default Gemini server-side).', example: '.nexara jelaskan sejarah JKT48', requiredProvider: 'gemini' }),
-  mk('openai', 'AI', { description: 'Berinteraksi dengan provider OpenAI atau fallback terkonfigurasi.', example: '.openai buat ringkasan', requiredProvider: 'openai' }),
-  mk('toanime', 'AI', { description: 'Konversi foto menjadi gaya anime.', example: '.toanime', requiredProvider: 'gemini', status: 'pending_integration', hasRealHandler: false }),
-  mk('voicejapan', 'AI', { description: 'Sintesis suara berbahasa Jepang dari teks pengguna.', example: '.voicejapan ohayou gozaimasu', requiredProvider: 'tts', status: 'pending_integration', hasRealHandler: false }),
+  mk('aiimage', 'AI', { description: 'Bikin gambar keren pakai AI image generator.', example: '.aiimage panggung biru modern', requiredProvider: 'gemini' }),
+  mk('aiimg', 'AI', { aliases: ['aimg'], description: 'Alias cepat buat bikin gambar AI.', example: '.aiimg sunset tokyo', requiredProvider: 'gemini' }),
+  mk('byenexara', 'AI', { description: 'Tutup sesi ngobrol yang lagi jalan bareng AI Nexara.', example: '.byenexara', requiredProvider: 'gemini' }),
+  mk('byeopenai', 'AI', { description: 'Tutup sesi ngobrol bareng provider OpenAI.', example: '.byeopenai', requiredProvider: 'openai' }),
+  mk('editimg', 'AI', { description: 'Edit gambar yang dikirim sesuai instruksi teks kamu.', example: '.editimg ubah latar jadi biru', requiredProvider: 'gemini', status: 'pending_integration', hasRealHandler: false }),
+  mk('hitamkan', 'AI', { description: 'Kasih filter nuansa gelap pada gambar.', example: '.hitamkan', requiredPlugin: 'media-processor', status: 'pending_integration', hasRealHandler: false }),
+  mk('jadianime', 'AI', { description: 'Ubah foto potret jadi ilustrasi gaya anime.', example: '.jadianime', requiredProvider: 'gemini', status: 'pending_integration', hasRealHandler: false }),
+  mk('nexara', 'AI', { description: 'Ngobrol & tanya apa aja ke AI Nexara.', example: '.nexara jelasin sejarah JKT48', requiredProvider: 'gemini' }),
+  mk('openai', 'AI', { description: 'Tanya jawab pakai provider OpenAI atau fallback aktif.', example: '.openai bikinin ringkasan', requiredProvider: 'openai' }),
+  mk('toanime', 'AI', { description: 'Ubah foto jadi versi anime.', example: '.toanime', requiredProvider: 'gemini', status: 'pending_integration', hasRealHandler: false }),
+  mk('voicejapan', 'AI', { description: 'Ubah teks jadi suara bahasa Jepang.', example: '.voicejapan ohayou gozaimasu', requiredProvider: 'tts', status: 'pending_integration', hasRealHandler: false }),
 ];
 
 // 9.2 DOWNLOAD (18 commands)
@@ -54,7 +54,7 @@ const DOWNLOAD_COMMANDS: CommandDefinition[] = [
   'tiktokslidevideo', 'tiktokwm', 'twitterdl', 'ytmp3', 'ytmp4',
 ].map((name) =>
   mk(name, 'DOWNLOAD', {
-    description: `Pengunduh media resmi dari layanan ${name.replace(/dl$/, '')} (memerlukan plugin downloader aktif).`,
+    description: `Downloader media dari ${name.replace(/dl$/, '')} (butuh plugin downloader aktif).`,
     example: `.${name} https://contoh.tautan/media`,
     requiredPlugin: 'downloader-provider',
     status: 'pending_integration',
@@ -64,53 +64,53 @@ const DOWNLOAD_COMMANDS: CommandDefinition[] = [
 
 // 9.3 GAME (38 source commands + additional general games from addendum)
 const GAME_SOURCE_LIST: Array<[string, Partial<CommandDefinition>]> = [
-  ['akinator', { description: 'Memulai atau melihat status permainan tebak tokoh Akinator.' }],
-  ['akinatorstart', { description: 'Memulai sesi baru permainan Akinator.' }],
-  ['akinatorstop', { description: 'Menghentikan sesi aktif Akinator.' }],
-  ['asahotak', { description: 'Kuis asah otak logika dan pengetahuan umum.' }],
-  ['bom', { description: 'Permainan kotak bom virtual dengan grid & hadiah/penalti yang bisa diatur dari Dashboard.', example: '.bom' }],
-  ['buylimit', { description: 'Menukar balance virtual menjadi limit command pribadi (terhubung ke sistem limit terpadu).', example: '.buylimit 5' }],
-  ['caklontong', { description: 'Tebak-tebakan humor khas Cak Lontong dengan petunjuk jawaban.' }],
-  ['dare', { description: 'Tantangan aman (Truth or Dare versi aman) untuk pemain.' }],
-  ['family100', { description: 'Permainan survei Family 100 dengan pencatatan jawaban per sesi.' }],
-  ['hint', { description: 'Membuka petunjuk pada sesi permainan aktif (dapat mengurangi poin sesuai aturan).' }],
-  ['math', { description: 'Tantangan hitung cepat matematika dengan batas waktu server.' }],
-  ['nyerah', { description: 'Menyerah pada sesi permainan aktif di percakapan saat ini.' }],
-  ['redeem', { description: 'Menukarkan kode redeem berhadiah balance, EXP, limit, atau premium.', example: '.redeem KODE123' }],
-  ['sambungkata', { description: 'Permainan menyambung kata berdasarkan suku kata/huruf terakhir.' }],
-  ['siapakahaku', { description: 'Tebak siapa aku berdasarkan petunjuk deskriptif bertahap.' }],
-  ['sloth', { description: 'Permainan kombinasi tiga simbol acak dengan hadiah balance virtual (tanpa taruhan uang asli).' }],
-  ['suit', { description: 'Batu gunting kertas melawan bot atau pemain lain.', example: '.suit batu' }],
-  ['susunkalimat', { description: 'Menyusun kata acak menjadi kalimat bahasa Indonesia yang benar.' }],
-  ['susunkata', { description: 'Menyusun huruf acak menjadi kata yang tepat.' }],
-  ['susunlirik', { description: 'Menyusun potongan metadata/baris permainan kata tanpa reproduksi lirik penuh berhak cipta.' }],
-  ['tebakbendera', { description: 'Menebak negara berdasarkan bendera.' }],
-  ['tebakbom', { description: 'Varian permainan tebak kotak aman vs kotak bom.' }],
-  ['tebakchara', { description: 'Menebak karakter fiksi/anime dari petunjuk.' }],
-  ['tebakemoji', { description: 'Menebak judul film, lagu, makanan, peribahasa, atau tokoh dari rangkaian emoji (195+ soal).', example: '.tebakemoji' }],
-  ['tebakgambar', { description: 'Menebak teka-teki visual berbasis petunjuk.' }],
-  ['tebakkata', { description: 'Permainan tebak kata dengan pelacakan jawaban sesi.' }],
-  ['tebaklagu', { description: 'Tebak judul lagu berdasarkan petunjuk metadata (tanpa lirik panjang).' }],
-  ['tebaklaguanime', { description: 'Tebak lagu tema anime dari metadata dan petunjuk.' }],
-  ['tebaklagukpop', { description: 'Tebak lagu K-Pop dari metadata dan petunjuk.' }],
-  ['tekateki', { description: 'Kuis teka-teki klasik dengan skor server-side.' }],
-  ['tfbalance', { description: 'Transfer balance virtual antar pengguna secara transaksional.', example: '.tfbalance 628123456789 100' }],
-  ['tictactoe', { description: 'Permainan papan 3x3 Tic Tac Toe antar pemain atau lawan bot.', example: '.tictactoe' }],
-  ['truth', { description: 'Pertanyaan jujur aman (Truth or Dare versi aman).' }],
-  ['ulartangga', { description: 'Permainan papan Ular Tangga berbasis giliran.' }],
-  ['undercover', { description: 'Permainan deduksi sosial Undercover multibahasa (210 pasangan kata & opsi Mr. White) dengan pembagian kata via private chat.', example: '.undercover' }],
-  ['uno', { description: 'Permainan kartu UNO berbasis giliran dalam grup dengan kartu spesial, Wild color, timeout 60 detik, dan .uno stop.', example: '.uno' }],
-  ['werewolf', { description: 'Werewolf Classic berbasis room dengan pembagian peran private chat bertahap dan voting aman.', example: '.werewolf' }],
-  ['werewolf2', { aliases: ['ww2'], description: 'Mode lanjutan Werewolf Classic (Freya-san bot by Pak Ujan) dengan peran tambahan & voting malam private.', example: '.ww2' }],
+  ['akinator', { description: 'Mulai atau cek status game tebak tokoh Akinator.' }],
+  ['akinatorstart', { description: 'Mulai sesi baru game Akinator.' }],
+  ['akinatorstop', { description: 'Hentikan sesi Akinator yang lagi jalan.' }],
+  ['asahotak', { description: 'Kuis asah otak logika & pengetahuan umum.' }],
+  ['bom', { description: 'Main tebak kotak bom virtual dengan hadiah & penalti yang bisa diatur di Dashboard.', example: '.bom' }],
+  ['buylimit', { description: 'Tukar balance virtual jadi limit command pribadi.', example: '.buylimit 5' }],
+  ['caklontong', { description: 'Tebak-tebakan kocak khas Cak Lontong lengkap dengan petunjuk.' }],
+  ['dare', { description: 'Tantangan seru versi aman buat main bareng teman.' }],
+  ['family100', { description: 'Game survei Family 100 dengan papan skor tiap sesi.' }],
+  ['hint', { description: 'Buka petunjuk buat game yang lagi jalan (bisa ngurangin poin).' }],
+  ['math', { description: 'Adu cepat hitung matematika pakai timer server.' }],
+  ['nyerah', { description: 'Menyerah dari sesi game yang lagi jalan di chat ini.' }],
+  ['redeem', { description: 'Klaim kode redeem buat dapat balance, EXP, limit, atau premium.', example: '.redeem KODE123' }],
+  ['sambungkata', { description: 'Sambung kata berantai dari huruf atau suku kata terakhir.' }],
+  ['siapakahaku', { description: 'Tebak siapa aku dari petunjuk bertahap.' }],
+  ['sloth', { description: 'Putar kombinasi 3 simbol acak berhadiah balance virtual (bukan judi uang asli).' }],
+  ['suit', { description: 'Main batu gunting kertas lawan bot atau teman.', example: '.suit batu' }],
+  ['susunkalimat', { description: 'Susun kata acak jadi kalimat bahasa Indonesia yang pas.' }],
+  ['susunkata', { description: 'Susun huruf acak jadi kata yang bener.' }],
+  ['susunlirik', { description: 'Susun potongan baris lagu dari metadata (tanpa lirik penuh).' }],
+  ['tebakbendera', { description: 'Tebak nama negara dari benderanya.' }],
+  ['tebakbom', { description: 'Varian game tebak kotak aman vs kotak bom.' }],
+  ['tebakchara', { description: 'Tebak karakter fiksi atau anime dari petunjuknya.' }],
+  ['tebakemoji', { description: 'Tebak film, lagu, makanan, atau tokoh dari rangkaian emoji (195+ soal).', example: '.tebakemoji' }],
+  ['tebakgambar', { description: 'Tebak teka-teki gambar dari petunjuk yang ada.' }],
+  ['tebakkata', { description: 'Main tebak kata dengan tracking jawaban tiap sesi.' }],
+  ['tebaklagu', { description: 'Tebak judul lagu dari info metadata & petunjuk.' }],
+  ['tebaklaguanime', { description: 'Tebak lagu anime dari metadata & petunjuk.' }],
+  ['tebaklagukpop', { description: 'Tebak lagu K-Pop dari metadata & petunjuk.' }],
+  ['tekateki', { description: 'Kuis teka-teki klasik dengan skor tercatat di server.' }],
+  ['tfbalance', { description: 'Transfer balance virtual ke user lain.', example: '.tfbalance 628123456789 100' }],
+  ['tictactoe', { description: 'Main papan 3x3 Tic Tac Toe lawan bot atau teman.', example: '.tictactoe' }],
+  ['truth', { description: 'Pertanyaan jujur versi aman buat main bareng.' }],
+  ['ulartangga', { description: 'Main papan Ular Tangga bareng-bareng pakai giliran.' }],
+  ['undercover', { description: 'Game deduksi kata Undercover (210 pasangan kata + opsi Mr. White) dengan peran dikirim lewat chat pribadi.', example: '.undercover' }],
+  ['uno', { description: 'Main kartu UNO di grup dengan kartu aksi, Wild color, timeout 60 detik, dan .uno stop.', example: '.uno' }],
+  ['werewolf', { description: 'Werewolf Classic pakai room dengan pembagian peran lewat chat pribadi & voting aman.', example: '.werewolf' }],
+  ['werewolf2', { aliases: ['ww2'], description: 'Mode lanjutan Werewolf Classic (Freya-san bot by Pak Ujan) dengan peran ekstra & voting malam privat.', example: '.ww2' }],
 ];
 
 const GAME_ADDENDUM_EXTRAS: Array<[string, Partial<CommandDefinition>]> = [
-  ['mafia', { description: 'Mafia Game klasik dengan fase malam/siang terkelola server.' }],
-  ['spyfall', { description: 'Permainan deduksi lokasi Spyfall berbasis room.' }],
-  ['impostor', { description: 'Permainan deteksi Impostor berbasis giliran.' }],
-  ['tebakangka', { description: 'Menebak angka rahasia antara 1-100 dengan petunjuk lebih tinggi/rendah.' }],
-  ['quizbattle', { description: 'Duel adu cepat menjawab pertanyaan antar pemain.' }],
-  ['aducepat', { description: 'Adu cepat menjawab kuis pengetahuan dalam sesi grup/pribadi.' }],
+  ['mafia', { description: 'Mafia Game klasik dengan fase siang/malam teratur.' }],
+  ['spyfall', { description: 'Game cari mata-mata Spyfall berbasis room.' }],
+  ['impostor', { description: 'Game cari Impostor lewat diskusi & voting.' }],
+  ['tebakangka', { description: 'Tebak angka rahasia 1-100 dengan petunjuk lebih tinggi/rendah.' }],
+  ['quizbattle', { description: 'Duel adu cepat jawab kuis bareng pemain lain.' }],
+  ['aducepat', { description: 'Adu cepat jawab kuis pengetahuan di grup atau chat pribadi.' }],
 ];
 
 const GAME_COMMANDS: CommandDefinition[] = [
@@ -122,17 +122,17 @@ const GAME_COMMANDS: CommandDefinition[] = [
 
 // 9.4 GENERAL (11 commands)
 const GENERAL_COMMANDS: CommandDefinition[] = [
-  mk('changelog', 'GENERAL', { description: 'Menampilkan catatan rilis dan pembaruan terbaru Freya-san Hub.' }),
-  mk('everyone', 'GENERAL', { description: 'Menyebut seluruh anggota grup (khusus konteks grup & admin).', permission: 'group_admin' }),
-  mk('infobot', 'GENERAL', { description: 'Menampilkan informasi ringkas platform, versi, dan status layanan bot.' }),
-  mk('menu', 'GENERAL', { aliases: ['help'], description: 'Membuka Interactive List Menu bertingkat atau fallback menu teks.' }),
-  mk('owner', 'GENERAL', { description: 'Menampilkan informasi kontak dukungan resmi tanpa membocorkan nomor privat secara sembarangan.' }),
-  mk('ping', 'GENERAL', { description: 'Menguji latensi respons server dan status kesiapan bot.' }),
-  mk('resend', 'GENERAL', { description: 'Mengirim ulang pesan atau media terakhir yang diizinkan pada sesi.' }),
-  mk('runtime', 'GENERAL', { description: 'Menampilkan lama waktu server dan bot berjalan.' }),
-  mk('sender', 'GENERAL', { description: 'Menampilkan identitas pengirim pesan pada percakapan saat ini.' }),
-  mk('streak', 'GENERAL', { description: 'Kelola pasangan streak harian bersama teman (maks 10 pasangan & pulihkan maks 5x/bulan).', example: '.streak @user | .streak pulihkan' }),
-  mk('version', 'GENERAL', { description: 'Menampilkan versi sistem Freya-san Hub saat ini.' }),
+  mk('changelog', 'GENERAL', { description: 'Lihat catatan update terbaru Freya-san Hub.' }),
+  mk('everyone', 'GENERAL', { description: 'Mention semua anggota grup (khusus admin di grup).', permission: 'group_admin' }),
+  mk('infobot', 'GENERAL', { description: 'Lihat info singkat platform, versi, dan status bot.' }),
+  mk('menu', 'GENERAL', { aliases: ['help'], description: 'Buka menu interaktif WhatsApp atau daftar menu teks lengkap.' }),
+  mk('owner', 'GENERAL', { description: 'Lihat kontak Owner resmi tanpa sebar nomor pribadi sembarangan.' }),
+  mk('ping', 'GENERAL', { description: 'Cek kecepatan respon server dan kesiapan bot.' }),
+  mk('resend', 'GENERAL', { description: 'Kirim ulang pesan atau media terakhir yang diizinkan di sesi ini.' }),
+  mk('runtime', 'GENERAL', { description: 'Cek udah berapa lama server dan bot jalan.' }),
+  mk('sender', 'GENERAL', { description: 'Lihat info identitas pengirim pesan di chat ini.' }),
+  mk('streak', 'GENERAL', { description: 'Kelola pasangan streak harian bareng teman (maks 10 pasangan & pulihin maks 5x/bulan).', example: '.streak @user | .streak pulihkan' }),
+  mk('version', 'GENERAL', { description: 'Cek versi sistem Freya-san Hub sekarang.' }),
 ];
 
 // 9.5 GROUP (122 commands)
@@ -162,16 +162,16 @@ const GROUP_NAMES: string[] = [
 ];
 
 const GROUP_SPECIAL_DESC: Record<string, Partial<CommandDefinition>> = {
-  antiluar: { description: 'Mendeteksi nomor di luar kode negara Indonesia (+62) dengan opsi peringatan/hapus/kick serta pengecualian.' },
-  antikudeta: { description: 'Melindungi jabatan owner grup dari demote oleh admin lain bila bot memiliki izin admin.' },
-  antigroupsw: { description: 'Mencatat pelanggaran status grup sesuai keterbatasan API WhatsApp dengan sanksi bertahap.' },
-  antimentionsw: { description: 'Pengaturan ON/OFF dan pencatatan pelanggaran mention grup pada status.' },
-  antibot: { description: 'Mencegah bot tidak terdaftar masuk grup; bot utama & whitelist owner dikecualikan.' },
-  done: { description: 'Menandai pekerjaan grup selesai dengan waktu dan penanggung jawab.', permission: 'group_admin' },
-  proses: { description: 'Menandai pekerjaan grup sedang diproses dengan penanggung jawab dan notifikasi.', permission: 'group_admin' },
-  antisticker: { description: 'Mengaktifkan filter anti-stiker (termasuk stiker yang memuat konteks audio) di grup.', example: '.antisticker on' },
-  streakgrup: { description: 'Kelola streak grup harian (on/off, top, pulihkan maks 5x/bulan; aktif min 3 user berbeda atau 5 interaksi bot).', example: '.streakgrup on | .streakgrup top | .streakgrup pulihkan' },
-  createschedulecall: { description: 'Membuat pengingat jadwal panggilan grup.', status: 'pending_integration', hasRealHandler: false },
+  antiluar: { description: 'Deteksi nomor luar negeri (selain +62) dengan opsi teguran/hapus/kick.' },
+  antikudeta: { description: 'Jaga posisi owner grup biar nggak gampang didemote admin lain.' },
+  antigroupsw: { description: 'Catat pelanggaran status grup sesuai kemampuan API WhatsApp dengan sanksi bertahap.' },
+  antimentionsw: { description: 'Atur ON/OFF dan catat pelanggaran mention grup di status WhatsApp.' },
+  antibot: { description: 'Cegah bot asing masuk grup; bot utama & whitelist owner tetap aman.' },
+  done: { description: 'Tandai tugas atau orderan grup selesai lengkap dengan jam & penanggung jawab.', permission: 'group_admin' },
+  proses: { description: 'Tandai tugas atau orderan grup lagi diproses sama penanggung jawab.', permission: 'group_admin' },
+  antisticker: { description: 'Aktifin filter anti-stiker (termasuk stiker bersuara) di grup.', example: '.antisticker on' },
+  streakgrup: { description: 'Kelola streak grup harian (on/off, top, pulihkan maks 5x/bulan).', example: '.streakgrup on | .streakgrup top | .streakgrup pulihkan' },
+  createschedulecall: { description: 'Bikin pengingat jadwal panggilan grup.', status: 'pending_integration', hasRealHandler: false },
 };
 
 const GROUP_COMMANDS: CommandDefinition[] = GROUP_NAMES.map((name) =>
@@ -185,24 +185,24 @@ const GROUP_COMMANDS: CommandDefinition[] = GROUP_NAMES.map((name) =>
 
 // 9.6 INFO (18 commands)
 const INFO_COMMANDS: CommandDefinition[] = [
-  mk('balance', 'INFO', { description: 'Melihat saldo balance virtual akun Anda.' }),
-  mk('cekchannel', 'INFO', { description: 'Memeriksa informasi saluran WhatsApp resmi yang terhubung.' }),
-  mk('cekpremium', 'INFO', { description: 'Memeriksa status dan masa aktif langganan premium.' }),
-  mk('infocovid', 'INFO', { description: 'Menampilkan ringkasan informasi kesehatan publik dari sumber resmi.', status: 'pending_integration', hasRealHandler: false }),
-  mk('infogempa', 'INFO', { description: 'Mengambil info gempa terbaru dari sumber BMKG resmi.' }),
-  mk('infounsur', 'INFO', { description: 'Informasi unsur kimia dari tabel periodik terverifikasi.', example: '.infounsur Au' }),
-  mk('kodebahasa', 'INFO', { description: 'Daftar kode bahasa yang didukung sistem terjemahan & bot (id, en, ja).' }),
-  mk('level', 'INFO', { description: 'Menampilkan level dan progres EXP pengguna.' }),
-  mk('limit', 'INFO', { description: 'Menampilkan sisa limit penggunaan command harian.' }),
-  mk('listban', 'INFO', { description: 'Menampilkan daftar pengguna yang sedang diblokir dari bot.' }),
-  mk('listblock', 'INFO', { description: 'Menampilkan daftar kontak yang diblokir.' }),
-  mk('listgroup', 'INFO', { description: 'Menampilkan daftar grup yang terhubung dengan izin akses sesuai role.' }),
-  mk('listpremium', 'INFO', { description: 'Menampilkan daftar anggota dengan status premium aktif.' }),
-  mk('profile', 'INFO', { description: 'Menampilkan profil lengkap pengguna: level, EXP, balance, dan streak.' }),
-  mk('report', 'INFO', { description: 'Mengirim laporan bug atau masukan ke log administrator.', example: '.report deskripsi masalah' }),
-  mk('status', 'INFO', { description: 'Menampilkan kesehatan real-time WhatsApp engine, database, AI, dan antrean.' }),
-  mk('topglobal', 'INFO', { description: 'Papan peringkat global seluruh pengguna (Balance, Level, EXP).' }),
-  mk('toplocal', 'INFO', { description: 'Papan peringkat lokal khusus anggota grup aktif dengan statistik global akun.' }),
+  mk('balance', 'INFO', { description: 'Cek saldo balance virtual kamu.' }),
+  mk('cekchannel', 'INFO', { description: 'Cek info channel WhatsApp resmi yang terhubung.' }),
+  mk('cekpremium', 'INFO', { description: 'Cek status & sisa masa aktif premium kamu.' }),
+  mk('infocovid', 'INFO', { description: 'Lihat ringkasan info kesehatan publik dari sumber resmi.', status: 'pending_integration', hasRealHandler: false }),
+  mk('infogempa', 'INFO', { description: 'Cek info gempa terbaru langsung dari data resmi BMKG.' }),
+  mk('infounsur', 'INFO', { description: 'Cek detail unsur kimia dari tabel periodik.', example: '.infounsur Au' }),
+  mk('kodebahasa', 'INFO', { description: 'Lihat daftar kode bahasa yang didukung bot (id, en, ja).' }),
+  mk('level', 'INFO', { description: 'Cek level dan progres EXP akun kamu.' }),
+  mk('limit', 'INFO', { description: 'Cek sisa limit harian akun kamu.' }),
+  mk('listban', 'INFO', { description: 'Lihat daftar user yang lagi diban dari bot.' }),
+  mk('listblock', 'INFO', { description: 'Lihat daftar kontak yang lagi diblokir.' }),
+  mk('listgroup', 'INFO', { description: 'Lihat daftar grup yang terhubung sesuai izin akses kamu.' }),
+  mk('listpremium', 'INFO', { description: 'Lihat daftar user dengan status premium aktif.' }),
+  mk('profile', 'INFO', { description: 'Lihat profil lengkap kamu: level, EXP, balance, dan streak.' }),
+  mk('report', 'INFO', { description: 'Kirim laporan bug atau saran langsung ke catatan Owner.', example: '.report deskripsi masalah' }),
+  mk('status', 'INFO', { description: 'Cek kondisi real-time mesin WhatsApp, database, AI, dan antrean.' }),
+  mk('topglobal', 'INFO', { description: 'Lihat papan peringkat global semua user (Balance, Level, EXP).' }),
+  mk('toplocal', 'INFO', { description: 'Lihat papan peringkat lokal khusus anggota grup ini.' }),
 ];
 
 // 9.7 OWNER (152 source + 5 prefix manager commands = 157)
@@ -246,50 +246,50 @@ const OWNER_PREFIX_COMMANDS = ['prefix', 'listprefix', 'addprefix', 'delprefix',
 const OWNER_SPECIAL: Record<string, Partial<CommandDefinition>> = {
   claimFreyasanredeem: {
     aliases: ['claimwibusoftredeem'],
-    description: 'Mengklaim atau memverifikasi kode redeem resmi Freya-san Hub.',
+    description: 'Klaim atau cek keaslian kode redeem resmi Freya-san Hub.',
     sourceCorrection: 'Renamed from legacy "claimwibusoftredeem" to "claimFreyasanredeem".',
   },
-  spr: { status: 'pending_specification', hasRealHandler: false, description: 'Pending specification — fungsi asli belum diverifikasi owner.' },
-  sprx: { status: 'pending_specification', hasRealHandler: false, description: 'Pending specification — fungsi asli belum diverifikasi owner.' },
-  topeng: { status: 'pending_specification', hasRealHandler: false, description: 'Pending specification — fungsi asli belum diverifikasi owner.' },
-  topengx: { status: 'pending_specification', hasRealHandler: false, description: 'Pending specification — fungsi asli belum diverifikasi owner.' },
-  call: { status: 'pending_integration', hasRealHandler: false, description: 'Memerlukan integrasi panggilan WhatsApp yang didukung library; tidak melakukan simulasi panggilan palsu.' },
-  callloop: { status: 'pending_integration', hasRealHandler: false, description: 'Kontrol antrean loop panggilan (pending verifikasi library WhatsApp).' },
-  callplay: { status: 'pending_integration', hasRealHandler: false, description: 'Kontrol putar audio panggilan (pending verifikasi library WhatsApp).' },
-  callqueue: { status: 'pending_integration', hasRealHandler: false, description: 'Antrean sesi panggilan (pending verifikasi library WhatsApp).' },
-  callskip: { status: 'pending_integration', hasRealHandler: false, description: 'Lewati item antrean panggilan (pending verifikasi library WhatsApp).' },
-  callstop: { status: 'pending_integration', hasRealHandler: false, description: 'Hentikan sesi panggilan aktif (pending verifikasi library WhatsApp).' },
-  videocall: { status: 'pending_integration', hasRealHandler: false, description: 'Memerlukan dukungan WebRTC/panggilan video resmi WhatsApp.' },
-  golink: { description: 'OWNER -> GROUP MANAGEMENT: Mengambil tautan undangan grup berdasarkan ID grup tervalidasi.' },
-  upswgroup: { description: 'Mengunggah WhatsApp Status dengan mention grup melalui antrean dan cooldown.' },
-  upswgroupv2byid: { description: 'Mengunggah status WhatsApp berdasarkan ID grup spesifik dan status sewa.' },
-  upswmentiongroup: { description: 'Mengunggah status dengan mention grup (dengan preview, queue, dan cooldown).' },
-  antideletepc: { description: 'Mengirim notifikasi pesan terhapus di private chat bila salinan tersedia secara sah.' },
-  autonexara: { description: 'Mengaktifkan/menonaktifkan mode otomatis AI Nexara dengan fallback multi-provider.' },
-  autoread: { description: 'Sinkronisasi Blue Tick Control WhatsApp ON/OFF dari dashboard dan bot.' },
-  addredeem: { description: 'Wizard interaktif bertahap untuk membuat kode redeem dengan Balance, EXP, Level, dan reward tambahan dari Reward Registry.', example: '.addredeem' },
-  editredeem: { description: 'Mengubah batas klaim, masa berlaku, atau status kode redeem yang sudah ada.', example: '.editredeem FREYAHUB50 max_claims=200' },
-  inforedeem: { aliases: ['redeeminfo'], description: 'Menampilkan detail konfigurasi reward, kuota klaim, dan status kode redeem.', example: '.redeeminfo FREYAHUB50' },
-  deleteredeem: { aliases: ['delredeem'], description: 'Menghapus kode redeem dari daftar aktif tanpa menghilangkan riwayat klaim.', example: '.delredeem KODE123' },
-  redeemhistory: { description: 'Melihat log riwayat klaim kode redeem terbaru (berhasil, gagal, ditolak, kedaluwarsa).', example: '.redeemhistory FREYAHUB50' },
-  redeemstats: { description: 'Menampilkan statistik ringkas klaim kode redeem dan distribusi hadiah.', example: '.redeemstats' },
-  redeemdisable: { description: 'Menonaktifkan sementara kode redeem tertentu.', example: '.redeemdisable FREYAHUB50' },
-  redeemenable: { description: 'Mengaktifkan kembali kode redeem tertentu.', example: '.redeemenable FREYAHUB50' },
+  spr: { status: 'pending_specification', hasRealHandler: false, description: 'Pending spesifikasi — fungsinya masih nunggu konfirmasi Owner.' },
+  sprx: { status: 'pending_specification', hasRealHandler: false, description: 'Pending spesifikasi — fungsinya masih nunggu konfirmasi Owner.' },
+  topeng: { status: 'pending_specification', hasRealHandler: false, description: 'Pending spesifikasi — fungsinya masih nunggu konfirmasi Owner.' },
+  topengx: { status: 'pending_specification', hasRealHandler: false, description: 'Pending spesifikasi — fungsinya masih nunggu konfirmasi Owner.' },
+  call: { status: 'pending_integration', hasRealHandler: false, description: 'Butuh integrasi panggilan WhatsApp resmi; bot nggak bakal bikin panggilan palsu.' },
+  callloop: { status: 'pending_integration', hasRealHandler: false, description: 'Atur loop antrean panggilan (nunggu dukungan library WhatsApp).' },
+  callplay: { status: 'pending_integration', hasRealHandler: false, description: 'Putar audio di panggilan (nunggu dukungan library WhatsApp).' },
+  callqueue: { status: 'pending_integration', hasRealHandler: false, description: 'Antrean sesi panggilan (nunggu dukungan library WhatsApp).' },
+  callskip: { status: 'pending_integration', hasRealHandler: false, description: 'Lewati antrean panggilan (nunggu dukungan library WhatsApp).' },
+  callstop: { status: 'pending_integration', hasRealHandler: false, description: 'Stop sesi panggilan yang jalan (nunggu dukungan library WhatsApp).' },
+  videocall: { status: 'pending_integration', hasRealHandler: false, description: 'Butuh dukungan video call WebRTC resmi WhatsApp.' },
+  golink: { description: 'OWNER -> GROUP MANAGEMENT: Ambil link undangan grup lewat ID grup valid.' },
+  upswgroup: { description: 'Upload Status WhatsApp dengan mention grup lewat antrean & cooldown.' },
+  upswgroupv2byid: { description: 'Upload Status WhatsApp berdasarkan ID grup tertentu & status sewa.' },
+  upswmentiongroup: { description: 'Upload status dengan mention grup lengkap dengan preview & cooldown.' },
+  antideletepc: { description: 'Kirim notif kalau ada pesan dihapus di chat pribadi (kalau salinannya ada).' },
+  autonexara: { description: 'Nyalain atau matiin mode otomatis AI Nexara.' },
+  autoread: { description: 'Atur centang biru WhatsApp (Blue Tick) ON/OFF.' },
+  addredeem: { description: 'Wizard langkah demi langkah buat bikin kode redeem baru plus reward tambahan.', example: '.addredeem' },
+  editredeem: { description: 'Ubah batas klaim, masa aktif, atau status kode redeem yang udah ada.', example: '.editredeem FREYAHUB50 max_claims=200' },
+  inforedeem: { aliases: ['redeeminfo'], description: 'Lihat detail hadiah, kuota klaim, dan status kode redeem.', example: '.redeeminfo FREYAHUB50' },
+  deleteredeem: { aliases: ['delredeem'], description: 'Hapus kode redeem dari daftar aktif tanpa ngapus riwayat klaimnya.', example: '.delredeem KODE123' },
+  redeemhistory: { description: 'Lihat log riwayat klaim kode redeem terbaru.', example: '.redeemhistory FREYAHUB50' },
+  redeemstats: { description: 'Lihat ringkasan statistik klaim & pembagian hadiah kode redeem.', example: '.redeemstats' },
+  redeemdisable: { description: 'Matiin sementara kode redeem tertentu.', example: '.redeemdisable FREYAHUB50' },
+  redeemenable: { description: 'Aktifin lagi kode redeem tertentu.', example: '.redeemenable FREYAHUB50' },
   addlimit: {
     permission: 'public',
     isOwnerOnly: false,
-    description: 'Beli limit untuk diri sendiri atau kirim limit ke teman (via nomor WA atau balas pesan penerima).',
+    description: 'Beli limit buat diri sendiri atau kirim limit ke teman (pakai nomor WA atau balas pesannya).',
     example: '.addlimit 10 | .addlimit 628123456789 5 | (balas chat) .addlimit 5',
   },
   setbio: {
-    description: 'Mengatur bio/status profil akun WhatsApp bot resmi (Freya-san bot by Pak Ujan).',
+    description: 'Atur bio/info profil akun WhatsApp bot resmi (Freya-san bot by Pak Ujan).',
     example: '.setbio Freya-san bot by Pak Ujan aktif 24/7',
   },
   upswch: {
-    description: 'Mengirim postingan ke WhatsApp Channel/Saluran terotorisasi bila bot terhubung & menjadi admin saluran.',
+    description: 'Kirim postingan ke Channel WhatsApp kalau bot udah nyambung & jadi admin channel.',
     example: '.upswch <channelJid/invite> <teks>',
   },
-  redeemreset: { description: 'Mereset counter klaim kode redeem dengan konfirmasi eksplisit.', example: '.redeemreset FREYAHUB50 confirm' },
+  redeemreset: { description: 'Reset ulang hitungan klaim kode redeem pakai konfirmasi aman.', example: '.redeemreset FREYAHUB50 confirm' },
 };
 
 const OWNER_COMMANDS: CommandDefinition[] = [
@@ -297,7 +297,7 @@ const OWNER_COMMANDS: CommandDefinition[] = [
   ...OWNER_PREFIX_COMMANDS.map((name) =>
     mk(name, 'OWNER', {
       isOwnerOnly: true,
-      description: `Owner Prefix Manager (${name}) untuk mengelola 10 prefix default & prefix tambahan.`,
+      description: `Owner Prefix Manager (${name}) buat ngatur 10 prefix bawaan & prefix tambahan.`,
       notes: 'Bagian 7.3 Owner Prefix Manager.',
     }),
   ),
@@ -311,7 +311,7 @@ const RANDOM_COMMANDS: CommandDefinition[] = [
   'waifu',
 ].map((name) =>
   mk(name, 'RANDOM', {
-    description: `Generator konten acak ${name} dengan filter keamanan dan respons terstruktur.`,
+    description: `Generator konten acak ${name} yang aman dan rapi.`,
   }),
 );
 
@@ -322,7 +322,7 @@ const SEARCH_COMMANDS: CommandDefinition[] = [
   'otakudesuinfo', 'otakudesuongoing', 'pinterest', 'play', 'wikipedia', 'ytsearch',
 ].map((name) =>
   mk(name, 'SEARCH', {
-    description: `Pencarian informasi publik untuk modul ${name}.`,
+    description: `Cari info publik lewat modul ${name}.`,
     status: ['wikipedia', 'ipchecker', 'artinama', 'cuaca', 'jadwalshalat'].includes(name)
       ? 'active'
       : 'pending_integration',
@@ -341,12 +341,12 @@ const STICKER_COMMANDS: CommandDefinition[] = [
     aliases: name === 'stickeraudio' ? ['sa'] : [],
     description:
       name === 'brat2'
-        ? 'Membuat stiker brat teks & emoji (maks 100 karakter).'
+        ? 'Bikin stiker brat teks & emoji (maks 100 karakter).'
         : name === 'toimg'
-        ? 'Mengonversi stiker WebP (termasuk deteksi konteks audio) menjadi gambar PNG.'
+        ? 'Ubah stiker WebP jadi gambar PNG.'
         : name === 'stickeraudio'
-        ? 'Mengonversi video bersuara atau pasangan visual+audio menjadi stiker WhatsApp WebP animasi + audio Opus (StickerMessage.audioMessage).'
-        : `Pengolah stiker WhatsApp (${name}) dengan dukungan metadata watermark.`,
+        ? 'Ubah video bersuara atau gambar+audio jadi stiker WhatsApp WebP animasi bersuara Opus.'
+        : `Pengolah stiker WhatsApp (${name}) lengkap dengan watermark.`,
     example:
       name === 'brat2'
         ? '.brat2 santai aja ✨'
@@ -374,7 +374,7 @@ const TEXTMAKER_COMMANDS: CommandDefinition[] = [
   'watercolor', 'wetglass', 'window', 'wolf',
 ].map((name) =>
   mk(name, 'TEXTMAKER', {
-    description: `Pembuat teks bergaya visual "${name}" berbasis SVG/Canvas renderer.`,
+    description: `Bikin gambar teks bergaya "${name}".`,
     example: `.${name} Freya-san Hub`,
     sourceCorrection: TEXTMAKER_CORRECTIONS[name],
   }),
@@ -397,60 +397,60 @@ const TOOLS_NAMES: string[] = [
 
 const TOOLS_SPECIAL: Record<string, Partial<CommandDefinition>> = {
   folio: {
-    description: 'Mengubah teks dengan tag {judul}, {tengah}, {kiri}, {kanan}, {baris1/2/3}, {tebal}, {miring} menjadi dokumen kertas folio rapi.',
+    description: 'Ubah teks pakai tag {judul}, {tengah}, {kiri}, {kanan}, {baris1/2/3}, {tebal}, {miring} jadi dokumen kertas folio rapi.',
     example: '.folio {judul}SURAT RESMI\\n{baris2}\\nIsi paragraf.',
   },
   fakechios: {
     status: 'active',
     hasRealHandler: true,
-    description: 'Generator mockup kartu informasi iOS/channel berlabel [SIMULASI].',
+    description: 'Bikin mockup kartu info iOS/channel berlabel [SIMULASI].',
     example: '.fakechios Freya-san Hub | Pembaruan v5.0 aktif',
   },
-  bratbahlil: { description: 'Generator visual/stiker meme gaya teks papan bertanda.', example: '.bratbahlil Halo warga!' },
+  bratbahlil: { description: 'Bikin gambar/stiker meme gaya teks papan bertanda.', example: '.bratbahlil Halo warga!' },
   bratspongebob: {
     aliases: ['bratspgbb'],
-    description: 'Generator visual/stiker meme teks karakter gaya SpongeBob.',
+    description: 'Bikin gambar/stiker meme teks karakter gaya SpongeBob.',
     example: '.bratspgbb Kerjaan beres!',
   },
-  tiktokqc: { description: 'Generator mockup komentar/quoted TikTok berlabel [SIMULASI].', example: '.tiktokqc @freyafans | Seru banget live hari ini!' },
-  iqcpink: { description: 'Generator mockup iPhone Quoted Chat tema pink (-s right untuk rata kanan).', example: '.iqcpink -s right Halo semua!' },
-  iqcdark: { description: 'Generator mockup iPhone Quoted Chat tema gelap (mendukung lampiran gambar).', example: '.iqcdark Lagi santai malam ini' },
-  iqcimage: { description: 'Generator mockup iPhone Quoted Chat dengan gambar lampiran.', example: '.iqcimage Lihat foto ini' },
-  fakestoryig: { description: 'Generator mockup Instagram Story berlabel [SIMULASI].', example: '.fakestoryig freyasan | Sore yang cerah' },
-  fakecall: { description: 'Generator mockup layar panggilan suara/video berlabel [SIMULASI].', example: '.fakecall Freya | video' },
-  fakegc: { description: 'Generator mockup kartu undangan/info grup WhatsApp berlabel [SIMULASI].', example: '.fakegc Komunitas Freya | 48 Anggota' },
-  faketweet: { description: 'Generator mockup postingan gaya X/Twitter berlabel [SIMULASI].', example: '.faketweet Freya-san | Jangan lupa senyum hari ini!' },
-  spotifycard: { description: 'Membuat kartu Spotify dari metadata publik tautan lagu atau data pemutaran.', example: '.spotifycard https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT' },
+  tiktokqc: { description: 'Bikin mockup komentar TikTok berlabel [SIMULASI].', example: '.tiktokqc @freyafans | Seru banget live hari ini!' },
+  iqcpink: { description: 'Bikin mockup chat iPhone tema pink (-s right buat rata kanan).', example: '.iqcpink -s right Halo semua!' },
+  iqcdark: { description: 'Bikin mockup chat iPhone tema gelap (bisa pakai lampiran gambar).', example: '.iqcdark Lagi santai malam ini' },
+  iqcimage: { description: 'Bikin mockup chat iPhone plus lampiran gambar.', example: '.iqcimage Lihat foto ini' },
+  fakestoryig: { description: 'Bikin mockup Instagram Story berlabel [SIMULASI].', example: '.fakestoryig freyasan | Sore yang cerah' },
+  fakecall: { description: 'Bikin mockup layar panggilan suara/video berlabel [SIMULASI].', example: '.fakecall Freya | video' },
+  fakegc: { description: 'Bikin mockup kartu undangan/info grup WhatsApp berlabel [SIMULASI].', example: '.fakegc Komunitas Freya | 48 Anggota' },
+  faketweet: { description: 'Bikin mockup postingan gaya X/Twitter berlabel [SIMULASI].', example: '.faketweet Freya-san | Jangan lupa senyum hari ini!' },
+  spotifycard: { description: 'Bikin kartu Spotify dari info link lagu atau data lagu yang lagi diputar.', example: '.spotifycard https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT' },
   tolive: {
-    description: 'Mengonversi gambar/video menjadi Live/Motion Photo (Android XMP MotionPhoto + WhatsApp paired AssociationType.MOTION_PHOTO).',
+    description: 'Ubah gambar atau video jadi Live/Motion Photo (Android MotionPhoto + pasangan video WhatsApp).',
     example: '.tolive (balas gambar/video)',
   },
-  deep: { status: 'pending_specification', hasRealHandler: false, description: 'Pending specification — fungsi menunggu verifikasi implementasi audio/media.' },
-  fast: { status: 'pending_specification', hasRealHandler: false, description: 'Pending specification — fungsi menunggu verifikasi implementasi audio/media.' },
-  slow: { status: 'pending_specification', hasRealHandler: false, description: 'Pending specification — fungsi menunggu verifikasi implementasi audio/media.' },
-  kirim: { description: 'Mengirim pesan terstruktur ke nomor tujuan atau ke owner dengan kontrol konfirmasi & audit log.' },
+  deep: { status: 'pending_specification', hasRealHandler: false, description: 'Pending spesifikasi — lagi nunggu verifikasi efek audio.' },
+  fast: { status: 'pending_specification', hasRealHandler: false, description: 'Pending spesifikasi — lagi nunggu verifikasi efek audio.' },
+  slow: { status: 'pending_specification', hasRealHandler: false, description: 'Pending spesifikasi — lagi nunggu verifikasi efek audio.' },
+  kirim: { description: 'Kirim pesan terstruktur ke nomor tujuan atau ke Owner pakai konfirmasi & audit log.' },
   readviewonce: {
-    description: 'Terbatas: menghormati privasi pesan sekali lihat; tidak melewati proteksi privasi WhatsApp.',
+    description: 'Terbatas: hormatin privasi pesan sekali lihat; nggak bakal ngebobol proteksi privasi WhatsApp.',
     notes: 'Security boundary enforced (Section 18).',
   },
-  fakebca: { description: 'Simulasi visual edukatif berlabel [SIMULASI]; dilarang untuk bukti transaksi nyata.', example: '.fakebca Raka | 50000' },
-  fakedana: { description: 'Simulasi visual edukatif berlabel [SIMULASI]; dilarang untuk bukti transaksi nyata.', example: '.fakedana Raka | 25000' },
-  fakeovo: { description: 'Simulasi visual edukatif berlabel [SIMULASI]; dilarang untuk bukti transaksi nyata.', example: '.fakeovo Raka | 30000' },
+  fakebca: { description: 'Simulasi visual edukatif berlabel [SIMULASI]; dilarang buat bukti transfer asli.', example: '.fakebca Raka | 50000' },
+  fakedana: { description: 'Simulasi visual edukatif berlabel [SIMULASI]; dilarang buat bukti transfer asli.', example: '.fakedana Raka | 25000' },
+  fakeovo: { description: 'Simulasi visual edukatif berlabel [SIMULASI]; dilarang buat bukti transfer asli.', example: '.fakeovo Raka | 30000' },
   fakeml: { description: 'Simulasi kartu profil game berlabel [SIMULASI].', example: '.fakeml FreyaPlayer | Mythic' },
-  ebase64: { description: 'Encode teks ke Base64.' },
+  ebase64: { description: 'Encode teks jadi Base64.' },
   dbase64: { description: 'Decode teks dari Base64.' },
-  ehex: { description: 'Encode teks ke Hexadecimal.' },
+  ehex: { description: 'Encode teks jadi Hexadecimal.' },
   dhex: { description: 'Decode teks dari Hexadecimal.' },
-  readmore: { description: 'Membuat pesan teks dengan pemisah "Baca Selengkapnya" WhatsApp.' },
-  halah: { description: 'Mengubah huruf vokal teks menjadi huruf a.' },
-  heleh: { description: 'Mengubah huruf vokal teks menjadi huruf e.' },
-  hilih: { description: 'Mengubah huruf vokal teks menjadi huruf i.' },
-  holoh: { description: 'Mengubah huruf vokal teks menjadi huruf o.' },
-  huluh: { description: 'Mengubah huruf vokal teks menjadi huruf u.' },
-  reverse: { description: 'Membalik urutan karakter teks.' },
-  qrcode: { description: 'Membuat gambar QR Code dari teks atau tautan.' },
-  cekplatform: { description: 'Menampilkan tipe perangkat/platform pengirim pesan.' },
-  translate: { description: 'Menerjemahkan teks antar bahasa (ID / EN / JA).' },
+  readmore: { description: 'Bikin pesan teks pakai pemisah "Baca Selengkapnya" di WhatsApp.' },
+  halah: { description: 'Ubah semua huruf vokal teks jadi huruf a.' },
+  heleh: { description: 'Ubah semua huruf vokal teks jadi huruf e.' },
+  hilih: { description: 'Ubah semua huruf vokal teks jadi huruf i.' },
+  holoh: { description: 'Ubah semua huruf vokal teks jadi huruf o.' },
+  huluh: { description: 'Ubah semua huruf vokal teks jadi huruf u.' },
+  reverse: { description: 'Balik urutan karakter teks.' },
+  qrcode: { description: 'Bikin gambar QR Code dari teks atau link.' },
+  cekplatform: { description: 'Cek tipe HP/perangkat pengirim pesan.' },
+  translate: { description: 'Terjemahin teks antar bahasa (ID / EN / JA).' },
 };
 
 const ACTIVE_TOOLS_SET = new Set([
@@ -476,22 +476,22 @@ const TOOLS_COMMANDS: CommandDefinition[] = TOOLS_NAMES.map((name) => {
 
 // 48GROUP CENTER Dedicated Commands (Integrated with 48Group Intelligence & Game Center)
 const FORTY_EIGHT_COMMANDS: CommandDefinition[] = [
-  mk('48group', '48GROUP', { description: 'Menu utama 48Group Center (Intelligence Archive & Game Center).' }),
-  mk('jkt48', '48GROUP', { description: 'Menampilkan profil JKT48, jadwal theater, dan member terverifikasi.' }),
-  mk('akb48', '48GROUP', { description: 'Menampilkan profil AKB48 dan arsip resmi sister group.' }),
-  mk('member48', '48GROUP', { description: 'Mencari profil member 48Group terverifikasi beserta sumber resmi.', example: '.member48 Freya' }),
-  mk('theater48', '48GROUP', { description: 'Menampilkan daftar setlist dan arsip pertunjukan theater.' }),
+  mk('48group', '48GROUP', { description: 'Buka menu utama 48Group Center (Arsip & Game Center).' }),
+  mk('jkt48', '48GROUP', { description: 'Lihat profil JKT48, jadwal theater, dan member terverifikasi.' }),
+  mk('akb48', '48GROUP', { description: 'Lihat profil AKB48 dan arsip resmi sister group.' }),
+  mk('member48', '48GROUP', { description: 'Cari profil member 48Group terverifikasi plus sumber resminya.', example: '.member48 Freya' }),
+  mk('theater48', '48GROUP', { description: 'Lihat daftar setlist dan arsip show theater 48Group.' }),
   mk('istilah48', '48GROUP', { description: 'Kamus istilah 48Group (Jiko, Oshimen, Senbatsu, Kenkyuusei, dll.).', example: '.istilah48 oshimen' }),
-  mk('memberquiz', '48GROUP', { description: 'Kuis profil member 48Group menggunakan data terverifikasi.' }),
-  mk('groupquiz', '48GROUP', { description: 'Kuis pengetahuan grup dan sister group 48Group.' }),
+  mk('memberquiz', '48GROUP', { description: 'Kuis profil member 48Group dari database terverifikasi.' }),
+  mk('groupquiz', '48GROUP', { description: 'Kuis pengetahuan grup & sister group 48Group.' }),
   mk('songquiz', '48GROUP', { description: 'Kuis diskografi, single, center, dan tahun rilis 48Group.' }),
   mk('genchallenge', '48GROUP', { description: 'Tantangan sejarah dan urutan generasi 48Group.' }),
-  mk('theaterchallenge', '48GROUP', { description: 'Kuis setlist dan lagu pertunjukan theater 48Group.' }),
-  mk('timeline48', '48GROUP', { description: 'Permainan menyusun urutan peristiwa sejarah 48Group.' }),
-  mk('guessmember48', '48GROUP', { description: 'Tebak member 48Group dengan petunjuk bertahap.' }),
-  mk('daily48', '48GROUP', { description: 'Tantangan harian 48Group tanpa pengulangan soal berdekatan.' }),
-  mk('werewolf48', '48GROUP', { description: 'Werewolf 48Group bertema Theater & Center dengan sesi terkelola server.' }),
-  mk('mafia48', '48GROUP', { description: 'Mafia 48Group multipemain dalam room terpisah.' }),
+  mk('theaterchallenge', '48GROUP', { description: 'Kuis setlist & lagu theater 48Group.' }),
+  mk('timeline48', '48GROUP', { description: 'Game urutin peristiwa sejarah 48Group.' }),
+  mk('guessmember48', '48GROUP', { description: 'Tebak member 48Group pakai petunjuk bertahap.' }),
+  mk('daily48', '48GROUP', { description: 'Tantangan harian 48Group dengan soal fresh tiap hari.' }),
+  mk('werewolf48', '48GROUP', { description: 'Werewolf 48Group tema Theater & Center berbasis room.' }),
+  mk('mafia48', '48GROUP', { description: 'Mafia 48Group multiplayer dalam room terpisah.' }),
 ];
 
 export const ALL_COMMANDS: CommandDefinition[] = [

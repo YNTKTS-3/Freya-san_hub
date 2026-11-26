@@ -1,7 +1,11 @@
 import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { applyUserBalanceAndExp, db, runMigrations, seedDatabase } from './db';
-import { whatsappEngine } from './whatsappEngine';
+import { validatePairingPhoneNumber, whatsappEngine } from './whatsappEngine';
 import {
   clearRateLimitBucketsForTests,
   recordAbuseEvent,
@@ -37,6 +41,16 @@ import {
 } from './multiplayerGames';
 import { startGameSession, submitGameAction } from './gameEngine';
 import { generateBratSticker, generateMockupImage } from './mediaService';
+import {
+  buildBaileysListPayload,
+  buildMenuPayload,
+  formatMenuFallbackText,
+  issueMenuSession,
+  listMenuFallbackLogs,
+  recordMenuFallbackLog,
+  resolveMenuSelection,
+} from './menuService';
+import { findFormalIndonesianViolations } from '../core/botI18n';
 
 runMigrations();
 seedDatabase();
@@ -79,12 +93,18 @@ function cleanupTestEntities() {
   db.prepare(`DELETE FROM group_streak_daily_logs WHERE group_id IN (?, ?)`).run(TEST_GROUP_1, TEST_GROUP_2);
   db.prepare(`DELETE FROM group_streak_restores WHERE group_id IN (?, ?)`).run(TEST_GROUP_1, TEST_GROUP_2);
   db.prepare(`DELETE FROM groups WHERE id IN (?, ?)`).run(TEST_GROUP_1, TEST_GROUP_2);
-  db.prepare(`DELETE FROM game_sessions WHERE chat_id IN (?, ?, ?)`).run(
+  const privateChats = TEST_PHONES.map((p) => `${p}@s.whatsapp.net`);
+  const chatIds = [TEST_GROUP_1, TEST_GROUP_2, ...privateChats];
+  const chatPlaceholders = chatIds.map(() => '?').join(',');
+  db.prepare(`DELETE FROM game_sessions WHERE chat_id IN (${chatPlaceholders})`).run(...chatIds);
+  db.prepare(`DELETE FROM game_scores WHERE user_phone IN (${placeholders})`).run(...TEST_PHONES);
+  db.prepare(`DELETE FROM whatsapp_menu_sessions WHERE user_phone IN (${placeholders})`).run(...TEST_PHONES);
+  db.prepare(`DELETE FROM menu_fallback_logs WHERE chat_id IN (?, ?, ?, ?)`).run(
     TEST_GROUP_1,
     TEST_GROUP_2,
     `${TEST_PHONES[0]}@s.whatsapp.net`,
+    `${TEST_PHONES[10]}@s.whatsapp.net`,
   );
-  db.prepare(`DELETE FROM game_scores WHERE user_phone IN (${placeholders})`).run(...TEST_PHONES);
 }
 
 beforeEach(() => {
@@ -101,6 +121,7 @@ after(() => {
   clearRateLimitBucketsForTests();
   resetGameQueueDelayRangeForTests();
   updateBomConfig(originalBomCfg);
+  db.prepare(`UPDATE settings SET value = 'id', updated_at = datetime('now') WHERE key = 'default_language'`).run();
 });
 
 test('1 & 2. Limit system: initial limit is 50, premium preserves remaining limit & #addlimit works in 3 modes', () => {
@@ -789,3 +810,534 @@ test('11. Real #tolive (MotionPhoto JPEG+XMP+MP4) & #sa (Animated WebP+EXIF + Op
   assert.ok(jobRows.every((r) => r.validation_ok === 1));
   db.prepare(`DELETE FROM media_jobs WHERE user_phone IN (?, ?)`).run(TEST_PHONES[8], TEST_PHONES[9]);
 });
+
+test('12. v5.0.3 Interactive List menus, fallback navigation, strict permissions, game precedence & language switch', async () => {
+  const ownerPhone = whatsappEngine.getOwnerPhoneNormalized();
+  const userPhone = TEST_PHONES[10];
+  const userChatId = `${userPhone}@s.whatsapp.net`;
+
+  // 1) Verify every interactive menu key builds cleanly with casual nonbaku Indonesian + footer + Kembali
+  const keysToAudit = [
+    'main',
+    'games',
+    '48group',
+    '48group_level',
+    '48group_team',
+    '48group_team:old',
+    '48group_quiz',
+    'group_settings',
+    'bot_settings',
+    'owner',
+    'premium_redeem',
+    'economy',
+    'help_info',
+    'features',
+    'confirm:resetprefix',
+    'category:OWNER:1',
+    'category:OWNER:2',
+  ];
+
+  for (const key of keysToAudit) {
+    const { headerText, menu } = buildMenuPayload(key, {
+      prefix: '.',
+      lang: 'id',
+      isOwner: true,
+      isGroupAdmin: true,
+      chatScope: 'group',
+      groupName: 'Grup Uji Menu',
+      botStatus: 'online',
+      senderName: 'Owner',
+    });
+    assert.equal(menu.footer, 'Freya-san bot by Pak Ujan', `Wrong footer on menu ${key}`);
+    assert.ok(menu.sections.length >= 1, `Expected sections on menu ${key}`);
+    const totalRows = menu.sections.reduce((acc, s) => acc + s.rows.length, 0);
+    assert.ok(totalRows >= 2, `Expected rows on menu ${key}`);
+    if (key !== 'main') {
+      const flat = menu.sections.flatMap((s) => s.rows);
+      assert.ok(
+        flat.some((r) => /kembali/i.test(r.title) || r.id === 'menu:main'),
+        `Submenu ${key} must provide Kembali navigation`,
+      );
+    }
+    const fallbackBody = formatMenuFallbackText(menu, headerText, 'id');
+    assert.deepEqual(
+      findFormalIndonesianViolations(fallbackBody),
+      [],
+      `Formal Indonesian violation in menu ${key}`,
+    );
+    const baileysPayload = buildBaileysListPayload(menu, headerText);
+    assert.equal(baileysPayload.footer, 'Freya-san bot by Pak Ujan');
+  }
+
+  // 2) Open .menu as normal user -> reply "1" opens games submenu via numeric fallback
+  const mainRes = await whatsappEngine.processIncomingMessage({
+    chatId: userChatId,
+    chatScope: 'private',
+    senderPhone: userPhone,
+    senderName: 'Menu Tester',
+    text: '.menu',
+    isGroupAdmin: false,
+    source: 'simulator',
+  });
+  assert.equal(mainRes.status, 'ok');
+  assert.ok(mainRes.interactiveMenu);
+  assert.equal(mainRes.interactiveMenu!.menuKey, 'main');
+
+  clearRateLimitBucketsForTests();
+  const num1Res = await whatsappEngine.processIncomingMessage({
+    chatId: userChatId,
+    chatScope: 'private',
+    senderPhone: userPhone,
+    senderName: 'Menu Tester',
+    text: '1',
+    isGroupAdmin: false,
+    source: 'simulator',
+  });
+  assert.equal(num1Res.status, 'ok');
+  assert.equal(num1Res.interactiveMenu?.menuKey, 'games');
+  assert.deepEqual(findFormalIndonesianViolations(num1Res.replyText), []);
+
+  // 3) Explicit native selectedRowId tap opens 48group submenu
+  clearRateLimitBucketsForTests();
+  await whatsappEngine.processIncomingMessage({
+    chatId: userChatId,
+    chatScope: 'private',
+    senderPhone: userPhone,
+    senderName: 'Menu Tester',
+    text: '.menu',
+    isGroupAdmin: false,
+    source: 'simulator',
+  });
+  clearRateLimitBucketsForTests();
+  const tap48Res = await whatsappEngine.processIncomingMessage({
+    chatId: userChatId,
+    chatScope: 'private',
+    senderPhone: userPhone,
+    senderName: 'Menu Tester',
+    text: 'Menu 48GROUP',
+    selectedRowId: 'menu:48group',
+    isGroupAdmin: false,
+    source: 'simulator',
+  });
+  assert.equal(tap48Res.status, 'ok');
+  assert.equal(tap48Res.interactiveMenu?.menuKey, '48group');
+
+  // 4) Strict server-side permission checks: non-owner cannot open owner menu or execute owner row
+  clearRateLimitBucketsForTests();
+  const ownerDeniedCmd = await whatsappEngine.processIncomingMessage({
+    chatId: userChatId,
+    chatScope: 'private',
+    senderPhone: userPhone,
+    senderName: 'Menu Tester',
+    text: '.menu owner',
+    isGroupAdmin: false,
+    source: 'simulator',
+  });
+  assert.equal(ownerDeniedCmd.status, 'denied');
+  assert.deepEqual(findFormalIndonesianViolations(ownerDeniedCmd.replyText), []);
+
+  const ownerMenuForBypass = buildMenuPayload('owner', {
+    prefix: '.',
+    lang: 'id',
+    isOwner: true,
+    isGroupAdmin: true,
+    chatScope: 'private',
+  });
+  issueMenuSession({
+    chatId: userChatId,
+    userPhone,
+    chatScope: 'private',
+    menu: ownerMenuForBypass.menu,
+  });
+  const forgedRowTap = resolveMenuSelection({
+    chatId: userChatId,
+    userPhone,
+    chatScope: 'private',
+    selectedRowId: 'cmd:listprefix',
+    rawText: '',
+    isOwner: false,
+    isGroupAdmin: false,
+    prefix: '.',
+    lang: 'id',
+  });
+  assert.equal(forgedRowTap.kind, 'denied');
+
+  // Non-admin in group denied group_settings row
+  const groupAdminMenu = buildMenuPayload('group_settings', {
+    prefix: '.',
+    lang: 'id',
+    isOwner: false,
+    isGroupAdmin: true,
+    chatScope: 'group',
+  });
+  issueMenuSession({
+    chatId: TEST_GROUP_1,
+    userPhone,
+    chatScope: 'group',
+    menu: groupAdminMenu.menu,
+  });
+  const nonAdminTap = resolveMenuSelection({
+    chatId: TEST_GROUP_1,
+    userPhone,
+    chatScope: 'group',
+    selectedRowId: 'cmd:welcome_on',
+    rawText: '',
+    isOwner: false,
+    isGroupAdmin: false,
+    prefix: '.',
+    lang: 'id',
+  });
+  assert.equal(nonAdminTap.kind, 'denied');
+
+  // 5) Expired session check
+  db.prepare(`UPDATE whatsapp_menu_sessions SET expires_at = datetime('now', '-5 minutes') WHERE user_phone = ?`).run(userPhone);
+  const expiredTap = resolveMenuSelection({
+    chatId: userChatId,
+    userPhone,
+    chatScope: 'private',
+    selectedRowId: 'menu:games',
+    rawText: '',
+    isOwner: false,
+    isGroupAdmin: false,
+    prefix: '.',
+    lang: 'id',
+  });
+  assert.equal(expiredTap.kind, 'expired');
+
+  // 6) Active game priority: when .bom is running, sending "1" plays Bom instead of menu selection
+  clearRateLimitBucketsForTests();
+  await whatsappEngine.processIncomingMessage({
+    chatId: userChatId,
+    chatScope: 'private',
+    senderPhone: userPhone,
+    senderName: 'Menu Tester',
+    text: '.menu',
+    isGroupAdmin: false,
+    source: 'simulator',
+  });
+  clearRateLimitBucketsForTests();
+  const bomStart = await whatsappEngine.processIncomingMessage({
+    chatId: userChatId,
+    chatScope: 'private',
+    senderPhone: userPhone,
+    senderName: 'Menu Tester',
+    text: '.bom',
+    isGroupAdmin: false,
+    source: 'simulator',
+  });
+  assert.equal(bomStart.status, 'ok');
+  clearRateLimitBucketsForTests();
+  const bomMove = await whatsappEngine.processIncomingMessage({
+    chatId: userChatId,
+    chatScope: 'private',
+    senderPhone: userPhone,
+    senderName: 'Menu Tester',
+    text: '1',
+    isGroupAdmin: false,
+    source: 'simulator',
+  });
+  assert.equal(bomMove.interactiveMenu, undefined);
+  assert.match(bomMove.replyText, /Kotak|Bom|Aman|Meledak/i);
+
+  // 7) Fallback logs persistence
+  recordMenuFallbackLog({
+    chatId: userChatId,
+    menuKey: 'main',
+    mode: 'text_fallback',
+    reason: 'unit_test_fallback',
+    clientInfo: 'baileys-test',
+  });
+  const logs = listMenuFallbackLogs(10);
+  assert.ok(logs.some((l) => l.chat_id === userChatId && l.reason === 'unit_test_fallback'));
+
+  // 8) Owner language switch (.setcommand lang en -> .menu -> .setcommand lang id)
+  clearRateLimitBucketsForTests();
+  const setEn = await whatsappEngine.processIncomingMessage({
+    chatId: `${ownerPhone}@s.whatsapp.net`,
+    chatScope: 'private',
+    senderPhone: ownerPhone,
+    senderName: 'Owner',
+    text: '.setcommand lang en',
+    isGroupAdmin: true,
+    source: 'simulator',
+  });
+  assert.equal(setEn.status, 'ok');
+  assert.match(setEn.replyText, /English/i);
+
+  clearRateLimitBucketsForTests();
+  const enMenu = await whatsappEngine.processIncomingMessage({
+    chatId: `${ownerPhone}@s.whatsapp.net`,
+    chatScope: 'private',
+    senderPhone: ownerPhone,
+    senderName: 'Owner',
+    text: '.menu',
+    isGroupAdmin: true,
+    source: 'simulator',
+  });
+  assert.equal(enMenu.interactiveMenu?.buttonText, 'Open Menu List');
+
+  clearRateLimitBucketsForTests();
+  const setId = await whatsappEngine.processIncomingMessage({
+    chatId: `${ownerPhone}@s.whatsapp.net`,
+    chatScope: 'private',
+    senderPhone: ownerPhone,
+    senderName: 'Owner',
+    text: '.setcommand lang id',
+    isGroupAdmin: true,
+    source: 'simulator',
+  });
+  assert.equal(setId.status, 'ok');
+  assert.match(setId.replyText, /Indonesia/i);
+  db.prepare(`DELETE FROM whatsapp_menu_sessions WHERE user_phone = ?`).run(ownerPhone);
+});
+
+test('13. Baileys Pairing Code, QR Code, Reset Koneksi, Reset Sesi Penuh, Locking & History', async () => {
+  // 1) Validasi nomor telepon pairing code
+  assert.equal(validatePairingPhoneNumber('').ok, false);
+  assert.equal(validatePairingPhoneNumber('abc123456').ok, false);
+  assert.equal(validatePairingPhoneNumber('081234567890').ok, false);
+  assert.equal(validatePairingPhoneNumber('62123').ok, false);
+  assert.equal(validatePairingPhoneNumber('621234567890123456').ok, false);
+  const validPhone = validatePairingPhoneNumber('+62 812-3456-7890');
+  assert.equal(validPhone.ok, true);
+  assert.equal(validPhone.normalized, '6281234567890');
+
+  const tmpAuthDir = fs.mkdtempSync(path.join(os.tmpdir(), 'freya-wa-auth-test-'));
+  const historyBefore = (db.prepare(`SELECT COALESCE(MAX(id), 0) AS max_id FROM wa_connection_history`).get() as { max_id: number }).max_id;
+
+  interface MockSocketControl {
+    ev: EventEmitter;
+    endCalls: number;
+    pairingRequestedWith: string[];
+  }
+  const sockets: MockSocketControl[] = [];
+  let slowAuthRelease: (() => void) | null = null;
+  let useSlowFactoryOnce = false;
+  let nextCredsRegistered = false;
+
+  whatsappEngine.setAuthDirForTests(tmpAuthDir);
+  whatsappEngine.setSocketFactoryForTests(async ({ authDir }) => {
+    if (useSlowFactoryOnce) {
+      useSlowFactoryOnce = false;
+      await new Promise<void>((resolve) => {
+        slowAuthRelease = resolve;
+      });
+    }
+    const ev = new EventEmitter();
+    const ctrl: MockSocketControl = {
+      ev,
+      endCalls: 0,
+      pairingRequestedWith: [],
+    };
+    sockets.push(ctrl);
+
+    const sock: any = {
+      ev,
+      user: { id: '6281234567890:1@s.whatsapp.net' },
+      end: () => {
+        ctrl.endCalls += 1;
+      },
+      requestPairingCode: async (digits: string) => {
+        ctrl.pairingRequestedWith.push(digits);
+        return 'ABCD1234';
+      },
+      sendMessage: async () => ({ key: { id: 'mock-msg-id' } }),
+      readMessages: async () => undefined,
+      groupMetadata: async () => ({ subject: 'Mock Group', participants: [] }),
+    };
+
+    const state: any = {
+      creds: { registered: nextCredsRegistered },
+      keys: {},
+    };
+    const saveCreds = async () => {
+      fs.writeFileSync(
+        path.join(authDir, 'creds.json'),
+        JSON.stringify({ registered: state.creds.registered, noiseKey: 'secret-test-noise' }),
+        'utf8',
+      );
+    };
+    return { sock, state, saveCreds };
+  });
+
+  try {
+    // Pastikan state bersih di awal uji
+    await whatsappEngine.disconnect('test');
+
+    // 2) Koneksi QR Code -> qr_ready -> connected -> cegah sesi ganda
+    const qrConnectPromise = whatsappEngine.connect({ method: 'qr', actor: 'test-owner' });
+    // Tunggu sampai socket mock pertama terbuat
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(sockets.length, 1);
+    sockets[0].ev.emit('connection.update', { qr: 'mock-qr-payload-test' });
+    const qrRes = await qrConnectPromise;
+    assert.equal(qrRes.ok, true);
+    assert.equal(whatsappEngine.getStatus().status, 'qr_ready');
+    assert.ok(whatsappEngine.getStatus().qrDataUrl?.startsWith('data:image/png;base64,'));
+
+    // Terhubung via QR
+    sockets[0].ev.emit('connection.update', { connection: 'open' });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(whatsappEngine.getStatus().status, 'connected');
+    assert.equal(whatsappEngine.getStatus().phoneNumber, '6281234567890');
+
+    // Cegah pembuatan sesi baru saat sudah terhubung
+    const duplicateConnect = await whatsappEngine.connect({
+      method: 'pairing_code',
+      phoneNumber: '6281234567890',
+      actor: 'test-owner',
+    });
+    assert.equal(duplicateConnect.ok, false);
+    assert.equal(sockets.length, 1, 'Tidak boleh membuat socket Baileys kedua saat sudah terhubung');
+
+    // 3) Reset Koneksi: putuskan socket aktif, bersihkan state sementara, pertahankan kredensial valid & sambung ulang
+    fs.writeFileSync(path.join(tmpAuthDir, 'creds.json'), JSON.stringify({ registered: true, noiseKey: 'secret-keep' }), 'utf8');
+    fs.writeFileSync(path.join(tmpAuthDir, 'app-state-sync-key-1.json'), '{"key":"keep"}', 'utf8');
+
+    const resetConnRes = await whatsappEngine.resetConnection('test-owner');
+    assert.equal(resetConnRes.ok, true);
+    assert.equal(resetConnRes.hasStoredAuth, true);
+    assert.equal(sockets[0].endCalls, 1, 'Socket lama wajib dihentikan saat Reset Koneksi');
+    assert.equal(sockets.length, 2, 'Reset Koneksi dengan kredensial tersimpan harus inisialisasi socket baru');
+    assert.equal(fs.existsSync(path.join(tmpAuthDir, 'creds.json')), true, 'creds.json harus tetap ada saat Reset Koneksi');
+    assert.equal(fs.existsSync(path.join(tmpAuthDir, 'app-state-sync-key-1.json')), true);
+
+    // 4) Reset Sesi Penuh: wajib konfirmasi tambahan, hapus auth files, JANGAN sentuh data aplikasi
+    const usersBefore = (db.prepare(`SELECT COUNT(*) AS c FROM users`).get() as { c: number }).c;
+    const settingsBefore = (db.prepare(`SELECT COUNT(*) AS c FROM settings`).get() as { c: number }).c;
+    const cmdsBefore = (db.prepare(`SELECT COUNT(*) AS c FROM commands`).get() as { c: number }).c;
+    const prefixesBefore = (db.prepare(`SELECT COUNT(*) AS c FROM prefixes`).get() as { c: number }).c;
+    const redeemBefore = (db.prepare(`SELECT COUNT(*) AS c FROM redeem_codes`).get() as { c: number }).c;
+
+    const resetWithoutConfirm = await whatsappEngine.resetFullSession({ confirm: false, actor: 'test-owner' });
+    assert.equal(resetWithoutConfirm.ok, false);
+
+    const resetFullRes = await whatsappEngine.resetFullSession({ confirm: true, actor: 'test-owner' });
+    assert.equal(resetFullRes.ok, true);
+    assert.equal(sockets[1].endCalls, 1, 'Socket sebelumnya wajib dihentikan saat Reset Sesi Penuh');
+    assert.equal(fs.existsSync(path.join(tmpAuthDir, 'app-state-sync-key-1.json')), false, 'File key lama wajib terhapus');
+    assert.equal(whatsappEngine.getStatus().status, 'disconnected');
+    assert.equal(whatsappEngine.getStatus().phoneNumber, null);
+    assert.equal(whatsappEngine.getStatus().hasStoredAuth, false);
+
+    assert.equal((db.prepare(`SELECT COUNT(*) AS c FROM users`).get() as { c: number }).c, usersBefore);
+    assert.equal((db.prepare(`SELECT COUNT(*) AS c FROM settings`).get() as { c: number }).c, settingsBefore);
+    assert.equal((db.prepare(`SELECT COUNT(*) AS c FROM commands`).get() as { c: number }).c, cmdsBefore);
+    assert.equal((db.prepare(`SELECT COUNT(*) AS c FROM prefixes`).get() as { c: number }).c, prefixesBefore);
+    assert.equal((db.prepare(`SELECT COUNT(*) AS c FROM redeem_codes`).get() as { c: number }).c, redeemBefore);
+
+    // 5) Re-auth pakai Pairing Code setelah Reset Sesi Penuh + Cancel + Expired + Berhasil
+    const badPhoneRes = await whatsappEngine.connect({
+      method: 'pairing_code',
+      phoneNumber: '081234567890',
+      actor: 'test-owner',
+    });
+    assert.equal(badPhoneRes.ok, false);
+    assert.equal(badPhoneRes.pairingStatus, 'failed');
+
+    // Request pairing code valid -> qr trigger requestPairingCode -> cancel
+    nextCredsRegistered = false;
+    const pairCancelPromise = whatsappEngine.connect({
+      method: 'pairing_code',
+      phoneNumber: '+62 812-3456-7890',
+      actor: 'test-owner',
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    const pairSock1 = sockets[sockets.length - 1];
+    pairSock1.ev.emit('connection.update', { qr: 'trigger-pairing-1' });
+    const pairCancelRes = await pairCancelPromise;
+    assert.equal(pairCancelRes.ok, true);
+    assert.equal(pairCancelRes.pairingStatus, 'code_ready');
+    assert.equal(pairCancelRes.pairingCode, 'ABCD1234');
+    assert.deepEqual(pairSock1.pairingRequestedWith, ['6281234567890']);
+
+    const cancelAction = await whatsappEngine.cancelPairing('test-owner');
+    assert.equal(cancelAction.ok, true);
+    assert.equal(cancelAction.pairingStatus, 'cancelled');
+    assert.equal(pairSock1.endCalls, 1);
+
+    // Simulasi pairing kedaluwarsa (timedOut)
+    const pairExpirePromise = whatsappEngine.connect({
+      method: 'pairing_code',
+      phoneNumber: '6281234567890',
+      actor: 'test-owner',
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    const pairSock2 = sockets[sockets.length - 1];
+    pairSock2.ev.emit('connection.update', { qr: 'trigger-pairing-2' });
+    await pairExpirePromise;
+    pairSock2.ev.emit('connection.update', {
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: 408 }, message: 'Timed Out' } },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(whatsappEngine.getStatus().pairingStatus, 'expired');
+
+    // Simulasi pairing sukses sampai terhubung
+    const pairSuccessPromise = whatsappEngine.connect({
+      method: 'pairing_code',
+      phoneNumber: '6281234567890',
+      actor: 'test-owner',
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    const pairSock3 = sockets[sockets.length - 1];
+    pairSock3.ev.emit('connection.update', { qr: 'trigger-pairing-3' });
+    await pairSuccessPromise;
+    pairSock3.ev.emit('connection.update', { connection: 'open' });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(whatsappEngine.getStatus().status, 'connected');
+    assert.equal(whatsappEngine.getStatus().pairingStatus, 'success');
+    assert.equal(whatsappEngine.getStatus().pairingCode, null);
+
+    // 6) Locking saat operasi koneksi/reset bersamaan
+    await whatsappEngine.disconnect('test-owner');
+    useSlowFactoryOnce = true;
+    const slowConnect = whatsappEngine.connect({ method: 'qr', actor: 'test-owner' });
+    await new Promise((r) => setTimeout(r, 20));
+    const concurrentReset = await whatsappEngine.resetConnection('test-owner');
+    assert.equal(concurrentReset.ok, false);
+    assert.match(concurrentReset.message, /lagi berjalan/i);
+    if (slowAuthRelease) (slowAuthRelease as () => void)();
+    await slowConnect;
+
+    // 7) Audit riwayat koneksi & reset (tanpa bocor kredensial/nomor mentah/bahasa baku)
+    const historyRows = db
+      .prepare(`SELECT * FROM wa_connection_history WHERE id > ? ORDER BY id ASC`)
+      .all(historyBefore) as Array<{ event_type: string; target_masked: string | null; detail: string }>;
+    const eventTypes = new Set(historyRows.map((r) => r.event_type));
+    assert.ok(eventTypes.has('connect_qr'));
+    assert.ok(eventTypes.has('connect_open'));
+    assert.ok(eventTypes.has('reset_connection'));
+    assert.ok(eventTypes.has('reset_full_session'));
+    assert.ok(eventTypes.has('pairing_code_issued'));
+    assert.ok(eventTypes.has('pairing_cancelled'));
+    assert.ok(eventTypes.has('pairing_expired'));
+    assert.ok(eventTypes.has('pairing_success'));
+
+    for (const row of historyRows) {
+      assert.ok(!row.detail.includes('secret-'), 'Riwayat tidak boleh berisi kredensial mentah');
+      assert.ok(!row.detail.includes('6281234567890'), 'Nomor mentah wajib disamarkan di riwayat');
+      assert.deepEqual(findFormalIndonesianViolations(row.detail), []);
+    }
+  } finally {
+    await whatsappEngine.disconnect('test-cleanup').catch(() => {});
+    whatsappEngine.setSocketFactoryForTests(null);
+    whatsappEngine.setAuthDirForTests(null);
+    fs.rmSync(tmpAuthDir, { recursive: true, force: true });
+    db.prepare(`DELETE FROM wa_connection_history WHERE id > ?`).run(historyBefore);
+    db.prepare(`
+      UPDATE bot_sessions
+      SET status = 'disconnected',
+          phone_number = NULL,
+          qr_code = NULL,
+          last_error = NULL,
+          reconnect_attempts = 0,
+          connection_method = 'qr',
+          pairing_status = 'idle',
+          pairing_expires_at = NULL
+      WHERE id = 'primary'
+    `).run();
+  }
+});
+
+

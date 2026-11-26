@@ -259,7 +259,7 @@ export const FortyEightCalendarWidget: React.FC<FortyEightCalendarWidgetProps> =
 
           {monthHighlightCount === 0 && nextUpcoming && (
             <div className="pt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800">
-              <span>Tidak ada agenda bertanggal tetap pada bulan ini.</span>
+              <span>Belum ada agenda bertanggal tetap di bulan ini.</span>
               <button
                 type="button"
                 onClick={() => jumpToDate(nextUpcoming.date)}
@@ -298,7 +298,7 @@ export const FortyEightCalendarWidget: React.FC<FortyEightCalendarWidgetProps> =
 
               {selectedDayItems.length === 0 ? (
                 <p className="text-xs text-slate-500 dark:text-slate-400 py-2 border-b border-slate-100 dark:border-slate-800">
-                  Tidak ada konser terjadwal atau ulang tahun member pada tanggal ini. Klik tanggal bertanda atau pilih sorotan mendatang di bawah.
+                  Nggak ada konser terjadwal atau ulang tahun member di tanggal ini. Klik tanggal yang bertanda atau pilih sorotan mendatang di bawah.
                 </p>
               ) : (
                 <div className="divide-y divide-slate-100 dark:divide-slate-800 border-b border-slate-100 dark:border-slate-800">
