@@ -1,4 +1,7 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   generateMessageIDV2,
   generateWAMessageFromContent,
@@ -366,5 +369,55 @@ export async function deliverSoundStickerViaSocket(params: {
       ok: false,
       error: err instanceof Error ? err.message : 'Gagal mengirim Sound Sticker via Baileys',
     };
+  }
+}
+
+export async function deliverLineSoundStickerComboViaSocket(params: {
+  sock: WASocket;
+  jid: string;
+  stickerBuffer: Buffer;
+  audioBuffer: Buffer;
+  quoted?: any;
+}): Promise<{ ok: boolean; stickerMsgId?: string; audioMsgId?: string; error?: string }> {
+  const tmpPrefix = path.join(os.tmpdir(), `freya-line-sa-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`);
+  const stickerPath = `${tmpPrefix}.webp`;
+  const audioPath = `${tmpPrefix}.ogg`;
+
+  try {
+    fs.writeFileSync(stickerPath, params.stickerBuffer);
+    fs.writeFileSync(audioPath, params.audioBuffer);
+
+    const stickerRes = await params.sock.sendMessage(
+      params.jid,
+      { sticker: { url: stickerPath } },
+      params.quoted ? { quoted: params.quoted } : undefined,
+    );
+    const audioRes = await params.sock.sendMessage(
+      params.jid,
+      { audio: { url: audioPath }, mimetype: 'audio/mp4', ptt: true },
+      params.quoted ? { quoted: params.quoted } : undefined,
+    );
+
+    return {
+      ok: true,
+      stickerMsgId: stickerRes?.key?.id ?? undefined,
+      audioMsgId: audioRes?.key?.id ?? undefined,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Gagal mengirim Kombo Stiker Bersuara via Baileys',
+    };
+  } finally {
+    try {
+      if (fs.existsSync(stickerPath)) fs.unlinkSync(stickerPath);
+    } catch {
+      // ignore temp cleanup error
+    }
+    try {
+      if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
+    } catch {
+      // ignore temp cleanup error
+    }
   }
 }

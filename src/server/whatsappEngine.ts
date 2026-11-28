@@ -61,8 +61,8 @@ import {
   updateMediaJobDelivery,
 } from './mediaService';
 import {
+  deliverLineSoundStickerComboViaSocket,
   deliverMotionPhotoViaSocket,
-  deliverSoundStickerViaSocket,
   installWhatsAppV5ProtoExtensions,
 } from './waMediaProtocol';
 import { PrivateDeliveryItem, stopUnoSession } from './multiplayerGames';
@@ -92,14 +92,19 @@ import {
   setGroupStreakEnabled,
 } from './streakService';
 import {
+  buildBaileysInteractiveListProto,
   buildBaileysListPayload,
   buildMenuPayload,
   formatMenuFallbackText,
+  getMenuConfig,
   InteractiveMenuPayload,
   issueMenuSession,
   recordMenuFallbackLog,
   resolveMenuSelection,
 } from './menuService';
+import { executeSavedCustomCommand, findCustomCommandByNameOrAlias } from './customCommandService';
+import { getEffectiveLanguages, setGlobalSeparatedLanguage, setGroupSeparatedLanguage, setUserSeparatedLanguage } from './translationService';
+import type { WaConnectionState } from './providers/types';
 
 const DEFAULT_WA_AUTH_DIR = path.resolve(process.cwd(), 'data', 'wa-auth');
 if (!fs.existsSync(DEFAULT_WA_AUTH_DIR)) {
@@ -148,27 +153,29 @@ export function validatePairingPhoneNumber(rawInput: string): {
       ok: false,
       normalized: '',
       formattedDisplay: '',
-      error: 'Masukin nomor WhatsApp dulu pakai kode negara (contoh: 6281234567890).',
+      error: 'Masukin nomor WhatsApp dulu (contoh: 628xxxxxxxxxx atau 08xxxxxxxxxx).',
     };
   }
-  const strippedFormatting = trimmed.replace(/[\s\-().+]/g, '');
-  if (!/^\d+$/.test(strippedFormatting)) {
+  let digits = trimmed.replace(/\D/g, '');
+  if (!digits) {
     return {
       ok: false,
       normalized: '',
       formattedDisplay: '',
-      error: 'Nomor WhatsApp cuma boleh berisi angka dan kode negara (contoh: 6281234567890).',
+      error: 'Nomor WhatsApp cuma boleh berisi angka dan kode negara (contoh: 628xxxxxxxxxx).',
     };
   }
-  if (strippedFormatting.startsWith('0')) {
+  if (digits.startsWith('08')) {
+    digits = `62${digits.slice(1)}`;
+  } else if (digits.startsWith('0')) {
     return {
       ok: false,
       normalized: '',
       formattedDisplay: '',
-      error: 'Nomor harus diawali kode negara, bukan angka 0 (misal ganti 08xx jadi 628xx).',
+      error: 'Nomor nggak boleh diawali 0 selain awalan 08xx Indonesia (contoh: 628xxxxxxxxxx).',
     };
   }
-  if (strippedFormatting.length < 8 || strippedFormatting.length > 15) {
+  if (digits.length < 8 || digits.length > 15) {
     return {
       ok: false,
       normalized: '',
@@ -178,8 +185,8 @@ export function validatePairingPhoneNumber(rawInput: string): {
   }
   return {
     ok: true,
-    normalized: strippedFormatting,
-    formattedDisplay: `+${strippedFormatting}`,
+    normalized: digits,
+    formattedDisplay: `+${digits}`,
   };
 }
 
@@ -226,6 +233,12 @@ export interface BotDispatchResponse {
     caption?: string;
   };
   privateDeliveries?: PrivateDeliveryItem[];
+  contactCard?: {
+    displayName: string;
+    phone: string;
+    org: string;
+    vcard: string;
+  };
   commandExecuted?: string;
   status: 'ok' | 'denied' | 'pending' | 'error' | 'ignored';
 }
@@ -265,6 +278,9 @@ class WhatsAppEngineManager {
   private isOperationLocked = false;
   private currentOperationName: string | null = null;
   private connectionEpoch = 0;
+  private pairingStabilizeDelayMs = 3000;
+  private pendingPairingCompletion = false;
+  private isReconnectingState = false;
   private customSocketFactory: BaileysSocketFactory | null = null;
 
   private mediaOutbox: Map<
@@ -292,6 +308,14 @@ class WhatsAppEngineManager {
     this.customSocketFactory = factory;
   }
 
+  public setPairingStabilizeDelayForTests(ms: number | null): void {
+    this.pairingStabilizeDelayMs = ms === null ? 3000 : Math.max(0, ms);
+  }
+
+  public getPairingStabilizeDelayMs(): number {
+    return this.pairingStabilizeDelayMs;
+  }
+
   public setAuthDirForTests(dirPath: string | null): void {
     this.authDir = dirPath ? path.resolve(dirPath) : DEFAULT_WA_AUTH_DIR;
     if (!fs.existsSync(this.authDir)) {
@@ -315,7 +339,7 @@ class WhatsAppEngineManager {
     const sock = makeWASocket({
       auth: state,
       logger,
-      browser: Browsers.ubuntu('Freya-san Hub'),
+      browser: Browsers.ubuntu('Chrome'),
       printQRInTerminal: false,
       markOnlineOnConnect: false,
     });
@@ -417,14 +441,32 @@ class WhatsAppEngineManager {
     const row = db
       .prepare("SELECT value FROM settings WHERE key = 'owner_number_configured'")
       .get() as { value: string } | undefined;
-    const raw = row?.value || process.env.OWNER_NUMBER || '+6285129878352';
+    const raw = row?.value?.trim() || process.env.OWNER_NUMBER?.trim() || '';
     return raw.replace(/\D/g, '');
   }
 
   public isOwnerPhone(phone: string): boolean {
     const clean = phone.replace(/\D/g, '');
     const ownerClean = this.getOwnerPhoneNormalized();
-    return clean.length > 0 && clean === ownerClean;
+    return clean.length > 0 && ownerClean.length > 0 && clean === ownerClean;
+  }
+
+  public getConnectionState(): WaConnectionState {
+    if (this.status === 'connected') return 'connected';
+    if (this.pendingPairingCompletion && (this.isReconnectingState || this.status === 'connecting')) {
+      return 'authenticated';
+    }
+    if (this.isReconnectingState) return 'reconnecting';
+    if (this.status === 'qr_ready') return 'waiting_qr';
+    if (
+      this.connectionMethod === 'pairing_code' &&
+      (this.pairingStatus === 'waiting' || this.pairingStatus === 'code_ready')
+    ) {
+      return 'waiting_pairing';
+    }
+    if (this.status === 'connecting') return 'connecting';
+    if (this.status === 'error' || this.pairingStatus === 'failed') return 'failed';
+    return 'disconnected';
   }
 
   public getStatus() {
@@ -433,6 +475,7 @@ class WhatsAppEngineManager {
       .get() as { value: string } | undefined;
     return {
       status: this.status,
+      connectionState: this.getConnectionState(),
       connectionMethod: this.connectionMethod,
       phoneNumber: this.phoneNumber,
       qrDataUrl: this.qrDataUrl,
@@ -501,7 +544,7 @@ class WhatsAppEngineManager {
 
     const { sock, state, saveCreds } = await this.createSocketWithAuth();
 
-    if (method === 'pairing_code' && state?.creds?.registered) {
+    if (method === 'pairing_code' && (sock.authState?.creds?.registered || state?.creds?.registered)) {
       try {
         sock.end(undefined);
       } catch {
@@ -534,6 +577,7 @@ class WhatsAppEngineManager {
 
     this.connectionEpoch += 1;
     const epoch = this.connectionEpoch;
+    const socketCreatedAt = Date.now();
 
     this.sock = sock;
     this.connectionMethod = method;
@@ -542,13 +586,17 @@ class WhatsAppEngineManager {
     this.qrDataUrl = null;
 
     if (method === 'pairing_code') {
+      this.pendingPairingCompletion = false;
+      this.isReconnectingState = false;
       this.pairingStatus = 'waiting';
       this.pairingCode = null;
       this.pairingPhoneMasked = params.phoneDigits ? maskPhoneNumberForGroup(params.phoneDigits) : null;
       this.pairingRequestedAt = new Date().toISOString();
       this.pairingExpiresAt = null;
       this.pairingError = null;
-    } else {
+    } else if (!params.isAutoReconnect) {
+      this.pendingPairingCompletion = false;
+      this.isReconnectingState = false;
       this.pairingStatus = 'idle';
       this.pairingCode = null;
       this.pairingPhoneMasked = null;
@@ -589,7 +637,104 @@ class WhatsAppEngineManager {
       }
     };
 
+    const requestPairingCodeSafely = async () => {
+      if (epoch !== this.connectionEpoch || pairingIssuedInEpoch) return;
+      if (!params.phoneDigits) return;
+      const elapsed = Date.now() - socketCreatedAt;
+      const remainingDelay = Math.max(0, this.pairingStabilizeDelayMs - elapsed);
+      if (remainingDelay > 0) {
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(() => {
+            this.scheduledTimers.delete(t);
+            resolve();
+          }, remainingDelay);
+          this.scheduledTimers.add(t);
+        });
+      }
+      if (epoch !== this.connectionEpoch || pairingIssuedInEpoch) return;
+      const isAlreadyRegistered = Boolean(sock.authState?.creds?.registered || state?.creds?.registered);
+      if (isAlreadyRegistered) {
+        this.pairingStatus = 'failed';
+        this.pairingCode = null;
+        this.pairingError = 'Kredensial udah terdaftar sebelumnya, nggak bisa minta Pairing Code baru.';
+        this.persistSessionState();
+        finishWait();
+        return;
+      }
+      pairingIssuedInEpoch = true;
+      try {
+        const code = await sock.requestPairingCode(params.phoneDigits);
+        if (epoch !== this.connectionEpoch) return;
+        this.pairingCode = code;
+        this.pairingStatus = 'code_ready';
+        this.pairingExpiresAt = new Date(Date.now() + 160_000).toISOString();
+        this.pairingError = null;
+        this.qrDataUrl = null;
+        this.persistSessionState();
+
+        this.clearPairingTimers();
+        this.pairingExpiryTimer = setTimeout(() => {
+          if (epoch !== this.connectionEpoch) return;
+          if (this.status !== 'connected' && this.pairingStatus === 'code_ready') {
+            this.pairingStatus = 'expired';
+            this.pairingCode = null;
+            this.pairingError = 'Kode pairing udah kedaluwarsa (lewat batas waktu). Minta kode pairing baru ya.';
+            this.status = 'disconnected';
+            this.closeCurrentSocket();
+            this.persistSessionState();
+            this.recordConnectionEvent({
+              eventType: 'pairing_expired',
+              connectionMethod: 'pairing_code',
+              actor,
+              targetMasked: this.pairingPhoneMasked,
+              status: 'error',
+              detail: 'Kode pairing kedaluwarsa sebelum dikonfirmasi di WhatsApp.',
+            });
+            addSystemLog('warn', 'whatsappEngine', 'Pairing code WhatsApp kedaluwarsa.');
+          }
+        }, 160_000);
+
+        this.recordConnectionEvent({
+          eventType: 'pairing_code_issued',
+          connectionMethod: 'pairing_code',
+          actor,
+          targetMasked: this.pairingPhoneMasked,
+          status: 'ok',
+          detail: 'Kode pairing berhasil dibuat dan siap dimasukin di Perangkat Tertaut WhatsApp.',
+        });
+        addSystemLog('info', 'whatsappEngine', `Pairing code siap buat ${this.pairingPhoneMasked || 'owner'}.`);
+      } catch (pairErr) {
+        if (epoch !== this.connectionEpoch) return;
+        const msgErr = pairErr instanceof Error ? pairErr.message : 'Gagal minta pairing code ke server WhatsApp.';
+        this.pairingStatus = 'failed';
+        this.pairingCode = null;
+        this.pairingError = msgErr;
+        this.lastError = msgErr;
+        this.status = 'error';
+        this.persistSessionState();
+        this.recordConnectionEvent({
+          eventType: 'pairing_failed',
+          connectionMethod: 'pairing_code',
+          actor,
+          targetMasked: this.pairingPhoneMasked,
+          status: 'error',
+          detail: `Gagal minta pairing code: ${msgErr}`,
+        });
+        addSystemLog('error', 'whatsappEngine', `Gagal pairing code: ${msgErr}`);
+      } finally {
+        finishWait();
+      }
+    };
+
     sock.ev.on('creds.update', saveCreds);
+
+    if (method === 'pairing_code' && params.phoneDigits) {
+      const pairingInitTimer = setTimeout(() => {
+        this.scheduledTimers.delete(pairingInitTimer);
+        void requestPairingCodeSafely();
+      }, this.pairingStabilizeDelayMs);
+      this.scheduledTimers.add(pairingInitTimer);
+    }
 
     sock.ev.on('connection.update', async (update) => {
       if (epoch !== this.connectionEpoch) return;
@@ -597,71 +742,7 @@ class WhatsAppEngineManager {
 
       if (qr) {
         if (method === 'pairing_code' && params.phoneDigits) {
-          if (!pairingIssuedInEpoch && !state?.creds?.registered) {
-            pairingIssuedInEpoch = true;
-            try {
-              const code = await sock.requestPairingCode(params.phoneDigits);
-              if (epoch !== this.connectionEpoch) return;
-              this.pairingCode = code;
-              this.pairingStatus = 'code_ready';
-              this.pairingExpiresAt = new Date(Date.now() + 160_000).toISOString();
-              this.pairingError = null;
-              this.qrDataUrl = null;
-              this.persistSessionState();
-
-              this.clearPairingTimers();
-              this.pairingExpiryTimer = setTimeout(() => {
-                if (epoch !== this.connectionEpoch) return;
-                if (this.status !== 'connected' && this.pairingStatus === 'code_ready') {
-                  this.pairingStatus = 'expired';
-                  this.pairingCode = null;
-                  this.pairingError = 'Kode pairing udah kedaluwarsa (lewat batas waktu). Minta kode pairing baru ya.';
-                  this.status = 'disconnected';
-                  this.closeCurrentSocket();
-                  this.persistSessionState();
-                  this.recordConnectionEvent({
-                    eventType: 'pairing_expired',
-                    connectionMethod: 'pairing_code',
-                    actor,
-                    targetMasked: this.pairingPhoneMasked,
-                    status: 'error',
-                    detail: 'Kode pairing kedaluwarsa sebelum dikonfirmasi di WhatsApp.',
-                  });
-                  addSystemLog('warn', 'whatsappEngine', 'Pairing code WhatsApp kedaluwarsa.');
-                }
-              }, 160_000);
-
-              this.recordConnectionEvent({
-                eventType: 'pairing_code_issued',
-                connectionMethod: 'pairing_code',
-                actor,
-                targetMasked: this.pairingPhoneMasked,
-                status: 'ok',
-                detail: 'Kode pairing berhasil dibuat dan siap dimasukin di Perangkat Tertaut WhatsApp.',
-              });
-              addSystemLog('info', 'whatsappEngine', `Pairing code siap buat ${this.pairingPhoneMasked || 'owner'}.`);
-            } catch (pairErr) {
-              if (epoch !== this.connectionEpoch) return;
-              const msgErr = pairErr instanceof Error ? pairErr.message : 'Gagal minta pairing code ke server WhatsApp.';
-              this.pairingStatus = 'failed';
-              this.pairingCode = null;
-              this.pairingError = msgErr;
-              this.lastError = msgErr;
-              this.status = 'error';
-              this.persistSessionState();
-              this.recordConnectionEvent({
-                eventType: 'pairing_failed',
-                connectionMethod: 'pairing_code',
-                actor,
-                targetMasked: this.pairingPhoneMasked,
-                status: 'error',
-                detail: `Gagal minta pairing code: ${msgErr}`,
-              });
-              addSystemLog('error', 'whatsappEngine', `Gagal pairing code: ${msgErr}`);
-            } finally {
-              finishWait();
-            }
-          }
+          void requestPairingCodeSafely();
         } else {
           this.status = 'qr_ready';
           this.qrDataUrl = await QRCode.toDataURL(qr, { width: 280, margin: 2 });
@@ -682,8 +763,12 @@ class WhatsAppEngineManager {
 
         const wasPairing =
           method === 'pairing_code' ||
+          this.pendingPairingCompletion ||
           this.pairingStatus === 'waiting' ||
           this.pairingStatus === 'code_ready';
+
+        this.pendingPairingCompletion = false;
+        this.isReconnectingState = false;
 
         if (wasPairing) {
           this.pairingStatus = 'success';
@@ -713,11 +798,43 @@ class WhatsAppEngineManager {
       if (connection === 'close') {
         const code = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
         const errMsg = lastDisconnect?.error?.message ?? 'Koneksi WhatsApp ditutup';
-        this.status = 'disconnected';
         this.qrDataUrl = null;
-        this.lastError = errMsg;
 
         const inPairingProgress = this.pairingStatus === 'waiting' || this.pairingStatus === 'code_ready';
+
+        // Handle Baileys stream error 515 (restartRequired) FIRST so freshly paired sessions reconnect cleanly!
+        if (code === DisconnectReason.restartRequired) {
+          this.clearPairingTimers();
+          if (inPairingProgress || method === 'pairing_code') {
+            this.pendingPairingCompletion = true;
+          }
+          this.isReconnectingState = true;
+          this.status = 'disconnected';
+          this.pairingCode = null;
+          this.lastError = null;
+          this.persistSessionState();
+          this.recordConnectionEvent({
+            eventType: 'pairing_restart_required',
+            connectionMethod: this.pendingPairingCompletion ? 'pairing_code' : method,
+            actor: 'whatsapp',
+            targetMasked: this.pairingPhoneMasked,
+            status: 'ok',
+            detail: 'WhatsApp mengirim restartRequired (515) setelah verifikasi perangkat. Menyambung ulang sesi terotentikasi...',
+          });
+          addSystemLog('info', 'whatsappEngine', 'WhatsApp 515 restartRequired diterima — melakukan reconnect sesi terdaftar.');
+          this.reconnectTimer = setTimeout(() => {
+            if (epoch !== this.connectionEpoch || this.isOperationLocked) return;
+            void this.connect({ method: 'qr', actor: 'pairing_restart_515', isAutoReconnect: true });
+          }, 150);
+          finishWait();
+          return;
+        }
+
+        this.status = 'disconnected';
+        this.lastError = errMsg;
+        this.pendingPairingCompletion = false;
+        this.isReconnectingState = false;
+
         if (inPairingProgress) {
           this.clearPairingTimers();
           if (code === DisconnectReason.timedOut) {
@@ -751,8 +868,7 @@ class WhatsAppEngineManager {
 
         const shouldReconnect =
           code !== DisconnectReason.loggedOut &&
-          this.hasStoredAuthCredentials() &&
-          method === 'qr';
+          this.hasStoredAuthCredentials();
         this.persistSessionState();
 
         if (code === DisconnectReason.loggedOut) {
@@ -768,6 +884,8 @@ class WhatsAppEngineManager {
 
         if (shouldReconnect && this.reconnectAttempts < 5) {
           this.reconnectAttempts += 1;
+          this.isReconnectingState = true;
+          this.persistSessionState();
           const delayMs = Math.min(30000, this.reconnectAttempts * 3000);
           addSystemLog('warn', 'whatsappEngine', `Menjadwalkan reconnect #${this.reconnectAttempts} dalam ${delayMs}ms.`);
           this.reconnectTimer = setTimeout(() => {
@@ -851,10 +969,11 @@ class WhatsAppEngineManager {
         }
 
         if (
-          this.status === 'connecting' ||
-          this.status === 'qr_ready' ||
-          this.pairingStatus === 'waiting' ||
-          this.pairingStatus === 'code_ready'
+          !options?.isAutoReconnect &&
+          (this.status === 'connecting' ||
+            this.status === 'qr_ready' ||
+            this.pairingStatus === 'waiting' ||
+            this.pairingStatus === 'code_ready')
         ) {
           return {
             ok: false,
@@ -934,11 +1053,13 @@ class WhatsAppEngineManager {
     const baseResult = lockedRes.result;
     if (!baseResult.ok) return baseResult;
 
-    // Wait briefly outside the lock so fast pairing-code/QR responses appear right away in HTTP response
+    // Wait outside the lock so pairing-code (after 3000ms stabilize) / QR responses appear directly in HTTP response
     if (waitForPairingPromise) {
       await Promise.race([
         waitForPairingPromise,
-        new Promise<void>((resolve) => setTimeout(resolve, method === 'pairing_code' ? 1200 : 400)),
+        new Promise<void>((resolve) =>
+          setTimeout(resolve, method === 'pairing_code' ? Math.max(1200, this.pairingStabilizeDelayMs + 1500) : 400),
+        ),
       ]);
     }
 
@@ -955,6 +1076,19 @@ class WhatsAppEngineManager {
             ? this.pairingError || 'Gagal dapetin kode pairing.'
             : baseResult.message,
     };
+  }
+
+  public async refreshQr(actor = 'owner') {
+    if (this.status === 'connected' && this.sock) {
+      return {
+        ok: false,
+        status: 'connected',
+        method: this.connectionMethod,
+        message: 'Akun WhatsApp udah terhubung, nggak perlu refresh QR Code.',
+      };
+    }
+    await this.resetConnection(actor);
+    return this.connect({ method: 'qr', actor });
   }
 
   public async cancelPairing(actor = 'owner'): Promise<{
@@ -1352,7 +1486,7 @@ class WhatsAppEngineManager {
           const lowerText = text.toLowerCase();
           if (
             quotedMediaKind !== 'none' &&
-            /\b(toimg|tolive|iqcdark|iqcimage|stickeraudio|sa)\b/.test(lowerText) &&
+            /\b(toimg|tolive|iqcdark|iqcimage|stickeraudio|stikeraudio|sa)\b/.test(lowerText) &&
             this.sock
           ) {
             try {
@@ -1420,24 +1554,23 @@ class WhatsAppEngineManager {
                 }
               } else if (mediaEntry.kind === 'sound_sticker' && mediaEntry.soundStickerBundle && this.sock) {
                 const sb = mediaEntry.soundStickerBundle;
-                const saRes = await deliverSoundStickerViaSocket({
+                const saRes = await deliverLineSoundStickerComboViaSocket({
                   sock: this.sock,
                   jid,
                   stickerBuffer: sb.stickerBuffer,
                   audioBuffer: sb.audioBuffer,
-                  audioSeconds: sb.audioSeconds,
-                  waveform: sb.waveform,
+                  quoted: msg,
                 });
                 if (mediaEntry.jobId) {
                   updateMediaJobDelivery(
                     mediaEntry.jobId,
-                    'wa_sound_sticker_field26',
+                    'wa_line_combo_sticker_ptt',
                     saRes.ok ? 'sent' : 'failed',
-                    { messageId: saRes.messageId, socketError: saRes.error },
+                    { stickerMsgId: saRes.stickerMsgId, audioMsgId: saRes.audioMsgId, socketError: saRes.error },
                   );
                 }
                 if (!saRes.ok) {
-                  this.enqueueMessage(jid, `⚠️ Gagal kirim protokol Sound Sticker (${saRes.error}). Mengirim stiker animasi fallback...`);
+                  this.enqueueMessage(jid, `⚠️ Gagal kirim Kombo Stiker Bersuara (${saRes.error}). Mengirim stiker animasi fallback...`);
                   this.enqueuePayload(jid, { sticker: sb.stickerBuffer });
                 }
               } else if (mediaEntry.kind === 'sticker') {
@@ -1451,26 +1584,86 @@ class WhatsAppEngineManager {
                   caption: result.replyText || mediaEntry.caption || '',
                 });
               }
+            } else if (result.contactCard && this.sock && this.status === 'connected') {
+              await this.sock.sendMessage(
+                jid,
+                {
+                  contacts: {
+                    displayName: result.contactCard.displayName,
+                    contacts: [{ vcard: result.contactCard.vcard }],
+                  },
+                },
+                { quoted: msg } as any,
+              );
+              if (result.replyText) {
+                await this.sock.sendMessage(jid, { text: result.replyText }, { quoted: msg } as any);
+              }
             } else if (result.interactiveMenu && this.sock && this.status === 'connected') {
-              const listPayload = buildBaileysListPayload(result.interactiveMenu, result.replyText);
-              try {
-                await this.sock.sendMessage(jid, listPayload as any);
-                recordMenuFallbackLog({
-                  chatId: jid,
-                  menuKey: result.interactiveMenu.menuKey,
-                  mode: 'interactive_list',
-                  reason: 'Baileys interactive list berhasil dikirim',
-                });
-              } catch (listErr) {
-                const errReason = listErr instanceof Error ? listErr.message : 'Client nggak support interactive list';
+              const menuMode = getMenuConfig().mode;
+              if (menuMode === 'text_only') {
                 recordMenuFallbackLog({
                   chatId: jid,
                   menuKey: result.interactiveMenu.menuKey,
                   mode: 'text_fallback',
-                  reason: errReason,
+                  reason: 'Mode menu diatur ke text_only oleh Owner',
                 });
                 if (result.replyText) {
                   this.enqueueMessage(jid, result.replyText);
+                }
+              } else {
+                try {
+                  const fullInteractive = buildBaileysInteractiveListProto({
+                    jid,
+                    userJid: this.sock.user?.id,
+                    menu: result.interactiveMenu,
+                    bodyText: result.replyText,
+                  });
+                  await this.sock.relayMessage(jid, fullInteractive.message!, {
+                    messageId: fullInteractive.key.id!,
+                    additionalNodes: [
+                      {
+                        tag: 'biz',
+                        attrs: {},
+                        content: [
+                          {
+                            tag: 'interactive',
+                            attrs: { type: 'native_flow', v: '1' },
+                            content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }],
+                          },
+                        ],
+                      },
+                    ],
+                  });
+                  recordMenuFallbackLog({
+                    chatId: jid,
+                    menuKey: result.interactiveMenu.menuKey,
+                    mode: 'interactive_list',
+                    reason: 'Baileys interactive list (nativeFlow single_select) berhasil dikirim',
+                  });
+                } catch (primaryErr) {
+                  try {
+                    const legacyListPayload = buildBaileysListPayload(result.interactiveMenu, result.replyText);
+                    await this.sock.sendMessage(jid, legacyListPayload as any, { quoted: msg } as any);
+                    recordMenuFallbackLog({
+                      chatId: jid,
+                      menuKey: result.interactiveMenu.menuKey,
+                      mode: 'interactive_list',
+                      reason: 'Baileys legacy listMessage fallback berhasil dikirim',
+                    });
+                  } catch (listErr) {
+                    const errReason = listErr instanceof Error ? listErr.message : primaryErr instanceof Error ? primaryErr.message : 'Client nggak support interactive list';
+                    recordMenuFallbackLog({
+                      chatId: jid,
+                      menuKey: result.interactiveMenu.menuKey,
+                      mode: 'text_fallback',
+                      reason: errReason,
+                    });
+                    if (menuMode === 'hybrid' && result.replyText) {
+                      this.enqueueMessage(jid, result.replyText);
+                    } else if (menuMode === 'interactive_only') {
+                      this.enqueueMessage(jid, `⚠️ Interactive List gagal dikirim (${errReason}). Coba ubah mode menu ke Hybrid di Dashboard biar teks cadangan tetap masuk ya.`);
+                    }
+                  }
                 }
               }
             } else if (result.replyText) {
@@ -1632,7 +1825,10 @@ class WhatsAppEngineManager {
       });
     }
 
-    const lang = this.getBotLanguage(userObj.language);
+    const { menuLang: lang, aiLang } = getEffectiveLanguages({
+      userPhone: msg.senderPhone,
+      groupId: msg.chatScope === 'group' ? msg.chatId : undefined,
+    });
     const t = botText(lang);
 
     // Broadcast inbound message to Live Chat Monitor (privacy-preserving)
@@ -1807,7 +2003,96 @@ class WhatsAppEngineManager {
         required_plugin: string | null;
       } | undefined;
 
+    if (!cmdRow && (parsed.commandName === 'setlangmenu' || parsed.commandName === 'setlangai')) {
+      const maintRow = db.prepare("SELECT value FROM settings WHERE key = 'maintenance_mode'").get() as { value: string } | undefined;
+      if (maintRow?.value === 'true' && !isOwner) {
+        const reply = t.maintenance;
+        this.emitOutbound(msg, reply);
+        return { handled: true, replyText: reply, status: 'denied', commandExecuted: parsed.commandName };
+      }
+      const latestUsr = ensureUserRecord(msg.senderPhone, msg.senderName);
+      if (latestUsr.is_banned && !isOwner) {
+        return { handled: true, replyText: t.restrictedUser('Akun dibatasi oleh administrator'), status: 'denied', commandExecuted: parsed.commandName };
+      }
+      const syntheticCmd = {
+        name: parsed.commandName,
+        category: 'GENERAL' as CommandCategory,
+        description: parsed.commandName === 'setlangai' ? 'Atur bahasa AI terpisah' : 'Atur bahasa Menu & Bot terpisah',
+        example: `${parsed.prefix}${parsed.commandName} id`,
+        permission: 'public',
+        status: 'active',
+        enabled: 1,
+        cooldown_sec: 0,
+        daily_limit: 0,
+        balance_reward: 0,
+        exp_reward: 0,
+        has_real_handler: 1,
+        is_owner_only: 0,
+        required_provider: null,
+        required_plugin: null,
+      };
+      const langOut = await this.executeCommandHandler(syntheticCmd, parsed.prefix!, parsed.rawArgs, parsed.args, msg, isOwner, lang, aiLang);
+      this.recordCommandUsage(syntheticCmd.name, parsed.prefix!, msg, langOut.status !== 'error', Date.now() - started);
+      if (langOut.replyText) {
+        this.emitOutbound(msg, langOut.replyText);
+      }
+      return { ...langOut, commandExecuted: syntheticCmd.name };
+    }
+
     if (!cmdRow) {
+      const customCmd = findCustomCommandByNameOrAlias(parsed.commandName);
+      if (customCmd) {
+        const maintRow = db.prepare("SELECT value FROM settings WHERE key = 'maintenance_mode'").get() as { value: string } | undefined;
+        if (maintRow?.value === 'true' && !isOwner) {
+          const reply = t.maintenance;
+          this.emitOutbound(msg, reply);
+          return { handled: true, replyText: reply, status: 'denied', commandExecuted: customCmd.name };
+        }
+        const latestUsr = ensureUserRecord(msg.senderPhone, msg.senderName);
+        if (latestUsr.is_banned && !isOwner) {
+          return { handled: true, replyText: t.restrictedUser('Akun dibatasi oleh administrator'), status: 'denied', commandExecuted: customCmd.name };
+        }
+        if (!customCmd.enabled) {
+          const reply = t.cmdDisabled(parsed.prefix!, customCmd.name);
+          this.emitOutbound(msg, reply);
+          return { handled: true, replyText: reply, status: 'denied', commandExecuted: customCmd.name };
+        }
+        if (customCmd.permission === 'owner' && !isOwner) {
+          const reply = t.ownerOnly(customCmd.name);
+          this.emitOutbound(msg, reply);
+          return { handled: true, replyText: reply, status: 'denied', commandExecuted: customCmd.name };
+        }
+        if (customCmd.permission === 'group_admin' && msg.chatScope === 'group' && !msg.isGroupAdmin && !isOwner) {
+          const reply = t.adminOnly(customCmd.name);
+          this.emitOutbound(msg, reply);
+          return { handled: true, replyText: reply, status: 'denied', commandExecuted: customCmd.name };
+        }
+        if (!isOwner && customCmd.cooldown_sec > 0) {
+          const cdKey = `${msg.senderPhone}:custom:${customCmd.name}`;
+          const expires = this.cooldownMap.get(cdKey) ?? 0;
+          if (Date.now() < expires) {
+            const waitSec = Math.ceil((expires - Date.now()) / 1000);
+            const reply = t.cooldown(customCmd.name, waitSec);
+            this.emitOutbound(msg, reply);
+            return { handled: true, replyText: reply, status: 'denied', commandExecuted: customCmd.name };
+          }
+          this.cooldownMap.set(cdKey, Date.now() + customCmd.cooldown_sec * 1000);
+        }
+        db.prepare('UPDATE prefixes SET usage_count = usage_count + 1 WHERE prefix = ?').run(parsed.prefix);
+        const execOut = executeSavedCustomCommand(customCmd, {
+          senderName: msg.senderName,
+          senderPhone: msg.senderPhone,
+          prefix: parsed.prefix!,
+          rawArgs: parsed.rawArgs,
+          args: parsed.args,
+          chatScope: msg.chatScope,
+          groupName: msg.groupName,
+        });
+        this.recordCommandUsage(customCmd.name, parsed.prefix!, msg, execOut.ok, Date.now() - started);
+        this.emitOutbound(msg, execOut.replyText);
+        return { handled: true, replyText: execOut.replyText, status: execOut.ok ? 'ok' : 'error', commandExecuted: customCmd.name };
+      }
+
       const reply = t.cmdNotFound(parsed.prefix!, parsed.commandName);
       this.emitOutbound(msg, reply);
       return { handled: true, replyText: reply, status: 'ignored' };
@@ -1918,7 +2203,7 @@ class WhatsAppEngineManager {
     db.prepare('UPDATE prefixes SET usage_count = usage_count + 1 WHERE prefix = ?').run(parsed.prefix);
 
     // Execute command handler
-    const response = await this.executeCommandHandler(cmdRow, parsed.prefix!, parsed.rawArgs, parsed.args, msg, isOwner, lang);
+    const response = await this.executeCommandHandler(cmdRow, parsed.prefix!, parsed.rawArgs, parsed.args, msg, isOwner, lang, aiLang);
     if (response.privateDeliveries?.length) {
       this.dispatchPrivateDeliveries(response.privateDeliveries);
     }
@@ -2138,6 +2423,7 @@ class WhatsAppEngineManager {
     msg: IncomingBotMessage,
     isOwner: boolean,
     lang: BotLang = 'id',
+    aiLang: BotLang = 'id',
   ): Promise<BotDispatchResponse> {
     const name = cmd.name;
     const t = botText(lang);
@@ -2205,9 +2491,38 @@ class WhatsAppEngineManager {
     }
 
     if (name === 'owner') {
+      const ownerPhone = this.getOwnerPhoneNormalized();
+      const ownerNameRow = db
+        .prepare("SELECT value FROM settings WHERE key = 'owner_name_configured'")
+        .get() as { value: string } | undefined;
+      const ownerName = ownerNameRow?.value?.trim() || process.env.OWNER_NAME?.trim() || 'Pak Ujan';
+      if (!ownerPhone) {
+        return {
+          handled: true,
+          replyText:
+            'Nomor kontak Owner belum diatur di server nih. Owner bisa ngisi nomor WhatsApp lewat Dashboard -> Settings -> Pengaturan Owner atau env OWNER_NUMBER ya!',
+          status: 'ok',
+        };
+      }
+      const formattedDisplay = `+${ownerPhone}`;
+      const vcard = [
+        'BEGIN:VCARD',
+        'VERSION:3.0',
+        `FN:${ownerName}`,
+        'ORG:Freya-san Hub v5.0',
+        `TEL;type=CELL;type=VOICE;waid=${ownerPhone}:${formattedDisplay}`,
+        'END:VCARD',
+      ].join('\n');
       return {
         handled: true,
-        replyText: 'Freya-san bot by Pak Ujan dikelola lewat Freya-san Hub Owner Console. Nomor pribadi owner tetap kami jaga privasinya ya.',
+        replyText:
+          `Ini kontak resmi owner Freya-san Hub v5.0 (${ownerName}). Hubungi aja langsung kalau ada keperluan atau laporan keluhan bot ya!`,
+        contactCard: {
+          displayName: ownerName,
+          phone: ownerPhone,
+          org: 'Freya-san Hub v5.0',
+          vcard,
+        },
         status: 'ok',
       };
     }
@@ -2268,9 +2583,7 @@ class WhatsAppEngineManager {
             status: 'error',
           };
         }
-        const normalized = normalizeBotLang(nextLangRaw);
-        db.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = 'default_language'").run(normalized);
-        addAuditLog(msg.senderPhone, 'settings.default_language', normalized);
+        const normalized = setGlobalSeparatedLanguage('menu', nextLangRaw, msg.senderPhone);
         const label = normalized === 'en' ? 'English' : normalized === 'ja' ? '日本語 (Japanese)' : 'Indonesia Santai';
         return {
           handled: true,
@@ -2279,6 +2592,41 @@ class WhatsAppEngineManager {
         };
       }
       return this.buildInteractiveMenu(prefix, 'bot_settings', msg, isOwner, lang);
+    }
+
+    if (name === 'setlangmenu' || name === 'setlangai') {
+      const kind = name === 'setlangai' ? 'ai' : 'menu';
+      const rawChoice = (args[0] || '').toLowerCase();
+      if (!['id', 'en', 'ja', 'jp', 'reset'].includes(rawChoice)) {
+        return {
+          handled: true,
+          replyText: `Formatnya: *${prefix}${name} id | en | ja | reset* (${kind === 'ai' ? 'khusus bahasa AI' : 'khusus bahasa Menu & Bot'}).`,
+          status: 'error',
+        };
+      }
+      const nextVal = rawChoice === 'reset' ? null : normalizeBotLang(rawChoice);
+      if (msg.chatScope === 'group' && (msg.isGroupAdmin || isOwner) && args[1]?.toLowerCase() === 'grup') {
+        setGroupSeparatedLanguage(msg.chatId, kind, nextVal, msg.senderPhone);
+        return {
+          handled: true,
+          replyText: `Sip! Bahasa *${kind === 'ai' ? 'AI' : 'Menu/Bot'}* khusus grup ini diatur ke *${nextVal || 'ikut pengaturan global'}*.`,
+          status: 'ok',
+        };
+      }
+      if (isOwner && args[1]?.toLowerCase() === 'global' && nextVal) {
+        setGlobalSeparatedLanguage(kind, nextVal, msg.senderPhone);
+        return {
+          handled: true,
+          replyText: `Sip! Bahasa global *${kind === 'ai' ? 'AI' : 'Menu/Bot'}* diganti ke *${nextVal}*.`,
+          status: 'ok',
+        };
+      }
+      setUserSeparatedLanguage(msg.senderPhone, kind, nextVal);
+      return {
+        handled: true,
+        replyText: `Oke! Bahasa pribadi *${kind === 'ai' ? 'AI' : 'Menu/Bot'}* kamu sekarang diatur ke *${nextVal || 'ikut pengaturan grup/global'}*.`,
+        status: 'ok',
+      };
     }
 
     // Streak Pasangan (#streak) & Streak Grup (#streakgrup)
@@ -3292,9 +3640,14 @@ class WhatsAppEngineManager {
 
     // AI Commands (Nexara / OpenAI / Translate)
     if (name === 'nexara' || name === 'openai' || name === 'translate') {
-      if (!rawArgs) return { handled: true, replyText: `Gunakan: ${prefix}${name} <pertanyaan atau teks>`, status: 'error' };
+      if (!rawArgs) return { handled: true, replyText: `Cara pakainya: ${prefix}${name} <pertanyaan atau teks>`, status: 'error' };
       const prompt = name === 'translate' ? `Terjemahkan teks berikut ke Bahasa Indonesia dan Bahasa Inggris secara ringkas: "${rawArgs}"` : rawArgs;
-      const aiRes = await runNexaraAiQuery({ prompt, userPhone: msg.senderPhone });
+      const aiRes = await runNexaraAiQuery({
+        prompt,
+        userPhone: msg.senderPhone,
+        groupId: msg.chatScope === 'group' ? msg.chatId : undefined,
+        aiLanguage: aiLang,
+      });
       if (!aiRes.ok) {
         return { handled: true, replyText: `AI Error (${aiRes.provider}): ${aiRes.error}`, status: 'error' };
       }

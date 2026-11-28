@@ -31,6 +31,9 @@ import { CommandAuditRow } from '../core/types';
 import { RedeemManagementPanel } from './RedeemManagementPanel';
 import { AbusePreventionPanel } from './AbusePreventionPanel';
 import { EconomyLimitPanel } from './EconomyLimitPanel';
+import { MenuManagementPanel } from './MenuManagementPanel';
+import { CustomCommandBuilderPanel } from './CustomCommandBuilderPanel';
+import { ApiManagerPanel } from './ApiManagerPanel';
 import {
   WaConnectionHistoryItem,
   WaStatusSnapshot,
@@ -43,16 +46,20 @@ type DashboardModule =
   | 'live_chat'
   | 'whatsapp'
   | 'commands'
+  | 'menus'
+  | 'custom_commands'
   | 'prefixes'
   | 'games_activity'
   | '48group_admin'
   | 'redeem_management'
   | 'limits_economy'
+  | 'api_vault'
   | 'users_redeem'
   | 'abuse_prevention'
   | 'groups'
   | 'ai_agents'
   | 'plugins_auto'
+  | 'languages_modules'
   | 'files'
   | 'logs_console'
   | 'backups_settings';
@@ -67,16 +74,20 @@ const SIDEBAR_ITEMS: Array<{ id: DashboardModule; label: string; group: string }
   { id: 'live_chat', label: 'Live Chat Monitor', group: 'Utama' },
   { id: 'whatsapp', label: 'Connection & Simulator', group: 'Utama' },
   { id: 'commands', label: 'Command Manager', group: 'Kontrol Bot' },
+  { id: 'menus', label: 'Menu Management', group: 'Kontrol Bot' },
+  { id: 'custom_commands', label: 'Custom Commands', group: 'Kontrol Bot' },
   { id: 'prefixes', label: 'Prefix Manager', group: 'Kontrol Bot' },
   { id: 'games_activity', label: 'Game Activity & Engine', group: 'Ekosistem' },
   { id: '48group_admin', label: '48Group Management', group: 'Ekosistem' },
   { id: 'redeem_management', label: 'Redeem Management', group: 'Platform Management' },
   { id: 'limits_economy', label: 'Limit, Economy & Game Bank', group: 'Platform Management' },
+  { id: 'api_vault', label: 'Central API Manager', group: 'Platform Management' },
   { id: 'users_redeem', label: 'Users & Contacts', group: 'Pengguna' },
   { id: 'abuse_prevention', label: 'User Abuse & Exploit Prevention', group: 'Pengguna' },
   { id: 'groups', label: 'Group & Anti-System', group: 'Pengguna' },
   { id: 'ai_agents', label: 'AI & Agent Center', group: 'Kecerdasan' },
   { id: 'plugins_auto', label: 'Plugins & Automation', group: 'Kecerdasan' },
+  { id: 'languages_modules', label: 'Multilingual & 13 Modules', group: 'Kecerdasan' },
   { id: 'files', label: 'File Manager', group: 'Sistem' },
   { id: 'logs_console', label: 'Logs & Terminal Console', group: 'Sistem' },
   { id: 'backups_settings', label: 'Backup & Settings', group: 'Sistem' },
@@ -154,7 +165,33 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
   const [consoleOutput, setConsoleOutput] = useState<string>('Siap. Ketik "help" untuk daftar perintah terizinkan.');
 
   const [backupsList, setBackupsList] = useState<any[]>([]);
+  const [backupStatus, setBackupStatus] = useState<{ hasEnvEncryptionKey: boolean; requiresManualPassphrase: boolean } | null>(null);
+  const [backupPassphrase, setBackupPassphrase] = useState('');
+  const [backupFeedback, setBackupFeedback] = useState<string | null>(null);
+  const [restoreConfirmId, setRestoreConfirmId] = useState<string | null>(null);
+  const [restoreConfirmText, setRestoreConfirmText] = useState('');
   const [settingsList, setSettingsList] = useState<Array<{ key: string; value: string; is_secret: number; updated_at: string }>>([]);
+  const [ownerNumInput, setOwnerNumInput] = useState('');
+  const [ownerNameInput, setOwnerNameInput] = useState('');
+  const [curPassInput, setCurPassInput] = useState('');
+  const [newPassInput, setNewPassInput] = useState('');
+  const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
+
+  // Multilingual & 13 Bot Modules Audit
+  const [translationsList, setTranslationsList] = useState<any[]>([]);
+  const [modulesAuditList, setModulesAuditList] = useState<any[]>([]);
+  const [trKeyInput, setTrKeyInput] = useState('');
+  const [trLangInput, setTrLangInput] = useState<'id' | 'en' | 'ja'>('id');
+  const [trTextInput, setTrTextInput] = useState('');
+
+  // Automation Workflow Form & Agent Runner
+  const [autoNameInput, setAutoNameInput] = useState('');
+  const [autoCronInput, setAutoCronInput] = useState('0 * * * *');
+  const [autoActionType, setAutoActionType] = useState<'system_note' | 'cleanup_logs' | 'webhook'>('system_note');
+  const [autoTargetInput, setAutoTargetInput] = useState('');
+  const [autoFeedback, setAutoFeedback] = useState<string | null>(null);
+  const [agentPromptInput, setAgentPromptInput] = useState('');
+  const [agentRunOut, setAgentRunOut] = useState<string | null>(null);
 
   const apiFetch = async (url: string, init: RequestInit = {}) => {
     const res = await fetch(url, {
@@ -178,11 +215,14 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
       .catch(() => {});
   }, []);
 
-  // WebSocket listener for Live Chat Monitor & WhatsApp status
+  // WebSocket listener with mandatory owner token handshake
   useEffect(() => {
     if (!token) return;
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'auth', token }));
+    };
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
@@ -245,6 +285,10 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
       const [p, a] = await Promise.all([apiFetch('/api/admin/plugins'), apiFetch('/api/admin/automations')]);
       if (p.ok) setPluginsList(p.plugins);
       if (a.ok) setAutoData(a);
+    } else if (mod === 'languages_modules') {
+      const [tRes, mRes] = await Promise.all([apiFetch('/api/admin/translations'), apiFetch('/api/admin/modules-audit')]);
+      if (tRes.ok) setTranslationsList(tRes.translations || []);
+      if (mRes.ok) setModulesAuditList(mRes.modules || []);
     } else if (mod === 'files') {
       const d = await apiFetch('/api/admin/files');
       if (d.ok) setFilesList(d.files);
@@ -252,9 +296,18 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
       const d = await apiFetch('/api/admin/logs');
       if (d.ok) setLogsData(d);
     } else if (mod === 'backups_settings') {
-      const [b, s] = await Promise.all([apiFetch('/api/admin/backups'), apiFetch('/api/admin/settings')]);
+      const [b, s, bSt] = await Promise.all([
+        apiFetch('/api/admin/backups'),
+        apiFetch('/api/admin/settings'),
+        apiFetch('/api/admin/backups/status'),
+      ]);
       if (b.ok) setBackupsList(b.backups);
-      if (s.ok) setSettingsList(s.settings);
+      if (s.ok) {
+        setSettingsList(s.settings);
+        const ownerNameRow = s.settings.find((x: any) => x.key === 'owner_name_configured');
+        if (ownerNameRow && !ownerNameInput) setOwnerNameInput(ownerNameRow.value);
+      }
+      if (bSt.ok) setBackupStatus(bSt);
     }
   };
 
@@ -502,7 +555,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
                   <div className="text-2xl font-bold font-mono tabular-nums mt-1">
                     {overview.totalUsers} / {overview.totalGroups}
                   </div>
-                  <div className="text-xs text-slate-500 mt-1">Owner privat: {overview.ownerPhone}</div>
+                  <div className="text-xs text-slate-500 mt-1">Owner privat: {overview.ownerPhone || 'Belum dikonfigurasi'}</div>
                 </div>
                 <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
                   <div className="text-xs text-slate-500">Antrean 48Group & Game Aktif</div>
@@ -664,6 +717,19 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
                               +{d.recipientPhone} (delay {d.delayMs}ms): {d.text.split('\n')[0]}
                             </div>
                           ))}
+                        </div>
+                      )}
+                      {simResult.contactCard && (
+                        <div className="p-3 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/30 text-xs space-y-1">
+                          <div className="font-bold text-emerald-800 dark:text-emerald-300">
+                            📇 Kartu Kontak vCard 3.0 — {simResult.contactCard.displayName} ({simResult.contactCard.org})
+                          </div>
+                          <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300">
+                            WhatsApp: +{simResult.contactCard.phone}
+                          </div>
+                          <pre className="mt-1 p-2 rounded bg-slate-950 text-slate-200 text-[10px] font-mono overflow-x-auto">
+                            {simResult.contactCard.vcard}
+                          </pre>
                         </div>
                       )}
                       {simResult.interactiveMenu && (
@@ -1613,6 +1679,11 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
           {/* 8b. LIMIT, ECONOMY & GAME BANK */}
           {activeModule === 'limits_economy' && <EconomyLimitPanel apiFetch={apiFetch} />}
 
+          {/* 8c. MENU MANAGEMENT & CUSTOM COMMANDS & API VAULT */}
+          {activeModule === 'menus' && <MenuManagementPanel apiFetch={apiFetch} />}
+          {activeModule === 'custom_commands' && <CustomCommandBuilderPanel apiFetch={apiFetch} />}
+          {activeModule === 'api_vault' && <ApiManagerPanel apiFetch={apiFetch} />}
+
           {/* 9b. USER ABUSE & EXPLOIT PREVENTION */}
           {activeModule === 'abuse_prevention' && <AbusePreventionPanel apiFetch={apiFetch} />}
 
@@ -1737,6 +1808,48 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
                         );
                       })}
                     </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-slate-100 dark:border-slate-800 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">Bahasa Menu / Bot Grup</span>
+                        <select
+                          aria-label={`Bahasa menu grup ${g.name}`}
+                          value={g.menu_language || ''}
+                          onChange={async (e) => {
+                            await apiFetch(`/api/admin/groups/${encodeURIComponent(g.id)}/languages`, {
+                              method: 'PATCH',
+                              body: JSON.stringify({ menu_language: e.target.value || null }),
+                            });
+                            void loadModuleData('groups');
+                          }}
+                          className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                        >
+                          <option value="">Ikut Global</option>
+                          <option value="id">Indonesia (Santai)</option>
+                          <option value="en">English</option>
+                          <option value="ja">日本語</option>
+                        </select>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">Bahasa AI / Nexara Grup</span>
+                        <select
+                          aria-label={`Bahasa AI grup ${g.name}`}
+                          value={g.ai_language || ''}
+                          onChange={async (e) => {
+                            await apiFetch(`/api/admin/groups/${encodeURIComponent(g.id)}/languages`, {
+                              method: 'PATCH',
+                              body: JSON.stringify({ ai_language: e.target.value || null }),
+                            });
+                            void loadModuleData('groups');
+                          }}
+                          className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                        >
+                          <option value="">Ikut Global</option>
+                          <option value="id">Indonesia (Santai)</option>
+                          <option value="en">English</option>
+                          <option value="ja">日本語</option>
+                        </select>
+                      </div>
+                    </div>
                   </div>
                 );
               })}
@@ -1838,6 +1951,37 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
                       ))}
                     </div>
                   )}
+                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2 text-xs">
+                    <div className="font-semibold">Uji AI Agent dengan Guardrail Keamanan</div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={agentPromptInput}
+                        onChange={(e) => setAgentPromptInput(e.target.value)}
+                        placeholder="Tugas aman untuk agent (mis. Ringkas jadwal theater terbaru)"
+                        className="flex-1 px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                      />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const targetAgent = aiData.agents[0]?.id || 'coordinator';
+                          const res = await apiFetch(`/api/admin/ai/agents/${encodeURIComponent(targetAgent)}/run`, {
+                            method: 'POST',
+                            body: JSON.stringify({ prompt: agentPromptInput, riskLevel: 'low' }),
+                          });
+                          setAgentRunOut(res.ok ? res.text : res.error || 'Ditolak guardrail.');
+                        }}
+                        className="px-3 py-1.5 rounded bg-blue-700 text-white font-semibold"
+                      >
+                        Jalankan Agent
+                      </button>
+                    </div>
+                    {agentRunOut && (
+                      <div className="p-2.5 rounded bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 whitespace-pre-wrap">
+                        {agentRunOut}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1847,59 +1991,266 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
           {activeModule === 'plugins_auto' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
-                <h2 className="text-base font-bold text-slate-900 dark:text-white">Plugin Manager</h2>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">Plugin Manager &amp; Dependencies</h2>
                 {pluginsList.map((pl) => (
-                  <div key={pl.id} className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 text-xs">
-                    <div>
-                      <div className="font-semibold text-sm">{pl.name} <span className="font-mono text-xs text-slate-400">v{pl.version}</span></div>
-                      <div className="text-slate-500">{pl.description}</div>
+                  <div key={pl.id} className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2 text-xs">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="font-semibold text-sm">{pl.name} <span className="font-mono text-xs text-slate-400">v{pl.version}</span></div>
+                        <div className="text-slate-500">{pl.description}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await apiFetch(`/api/admin/plugins/${pl.id}/toggle`, { method: 'POST', body: JSON.stringify({ enabled: !pl.enabled }) });
+                          void loadModuleData('plugins_auto');
+                        }}
+                        className={`px-3 py-1.5 rounded font-semibold shrink-0 ${pl.enabled ? 'bg-blue-700 text-white' : 'bg-slate-200 dark:bg-slate-800'}`}
+                      >
+                        {pl.enabled ? 'Aktif' : 'Nonaktif'}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await apiFetch(`/api/admin/plugins/${pl.id}/toggle`, { method: 'POST', body: JSON.stringify({ enabled: !pl.enabled }) });
-                        void loadModuleData('plugins_auto');
-                      }}
-                      className={`px-3 py-1.5 rounded font-semibold ${pl.enabled ? 'bg-blue-700 text-white' : 'bg-slate-200 dark:bg-slate-800'}`}
-                    >
-                      {pl.enabled ? 'Aktif' : 'Nonaktif'}
-                    </button>
+                    {pl.documentation && <div className="text-[11px] text-slate-600 dark:text-slate-400">Docs: {pl.documentation}</div>}
+                    {pl.dependencies_json && pl.dependencies_json !== '[]' && (
+                      <div className="font-mono text-[11px] text-slate-500">Dependencies: {pl.dependencies_json}</div>
+                    )}
+                    {pl.last_error && (
+                      <div className="text-[11px] text-rose-600 dark:text-rose-400">Error terakhir: {pl.last_error}</div>
+                    )}
                   </div>
                 ))}
               </div>
 
-              <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
-                <h2 className="text-base font-bold text-slate-900 dark:text-white">Automation Manager</h2>
+              <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">Automation Workflow &amp; Retry</h2>
+                <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 space-y-2 text-xs">
+                  <div className="font-semibold">Tambah Workflow Otomatisasi</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={autoNameInput}
+                      onChange={(e) => setAutoNameInput(e.target.value)}
+                      placeholder="Nama workflow"
+                      className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
+                    />
+                    <input
+                      type="text"
+                      value={autoCronInput}
+                      onChange={(e) => setAutoCronInput(e.target.value)}
+                      placeholder="Cron (mis. 0 * * * *)"
+                      className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono"
+                    />
+                    <select
+                      aria-label="Tipe aksi otomatisasi"
+                      value={autoActionType}
+                      onChange={(e) => setAutoActionType(e.target.value as any)}
+                      className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
+                    >
+                      <option value="system_note">Catat Log Sistem</option>
+                      <option value="cleanup_logs">Bersihkan Log Kadaluwarsa</option>
+                      <option value="webhook">Webhook HTTPS (Anti-SSRF)</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={autoTargetInput}
+                      onChange={(e) => setAutoTargetInput(e.target.value)}
+                      placeholder={autoActionType === 'webhook' ? 'https://example.com/hook' : 'Catatan aksi'}
+                      className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const res = await apiFetch('/api/admin/automations', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                          name: autoNameInput,
+                          cron_expr: autoCronInput,
+                          action: {
+                            type: autoActionType,
+                            ...(autoActionType === 'webhook' ? { url: autoTargetInput } : { note: autoTargetInput }),
+                          },
+                          max_retries: 2,
+                        }),
+                      });
+                      setAutoFeedback(res?.ok ? 'Workflow tersimpan.' : res?.error || 'Gagal menyimpan workflow.');
+                      if (res?.ok) {
+                        setAutoNameInput('');
+                        setAutoTargetInput('');
+                      }
+                      void loadModuleData('plugins_auto');
+                    }}
+                    className="px-3 py-1.5 rounded bg-blue-700 text-white font-semibold"
+                  >
+                    Simpan Workflow
+                  </button>
+                  {autoFeedback && <div className="text-blue-700 dark:text-blue-400">{autoFeedback}</div>}
+                </div>
+
                 {autoData?.automations.map((au) => (
-                  <div key={au.id} className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 text-xs">
-                    <div>
-                      <div className="font-semibold text-sm">{au.name}</div>
-                      <div className="font-mono text-slate-500">Cron: {au.cron_expr} · Run: {au.run_count}x</div>
+                  <div key={au.id} className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="font-semibold text-sm">{au.name}</div>
+                        <div className="font-mono text-slate-500">Cron: {au.cron_expr} · Run: {au.run_count}x · Retry max: {au.max_retries ?? 2}</div>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const r = await apiFetch(`/api/admin/automations/${au.id}/run`, { method: 'POST' });
+                            setAutoFeedback(r?.summary || (r?.ok ? 'Berhasil dijalankan.' : 'Gagal dijalankan.'));
+                            void loadModuleData('plugins_auto');
+                          }}
+                          className="px-2.5 py-1 rounded bg-blue-700 text-white font-semibold"
+                        >
+                          Jalankan
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await apiFetch(`/api/admin/automations/${au.id}/toggle`, { method: 'POST', body: JSON.stringify({ enabled: !au.enabled }) });
+                            void loadModuleData('plugins_auto');
+                          }}
+                          className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700"
+                        >
+                          {au.enabled ? 'Pause' : 'Resume'}
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex gap-1.5">
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          await apiFetch(`/api/admin/automations/${au.id}/run`, { method: 'POST' });
-                          void loadModuleData('plugins_auto');
-                        }}
-                        className="px-2.5 py-1 rounded bg-blue-700 text-white font-semibold"
-                      >
-                        Jalankan
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          await apiFetch(`/api/admin/automations/${au.id}/toggle`, { method: 'POST', body: JSON.stringify({ enabled: !au.enabled }) });
-                          void loadModuleData('plugins_auto');
-                        }}
-                        className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700"
-                      >
-                        {au.enabled ? 'Pause' : 'Resume'}
-                      </button>
-                    </div>
+                    {au.last_error && <div className="text-[11px] text-rose-600">Error: {au.last_error}</div>}
                   </div>
                 ))}
+
+                {Array.isArray(autoData?.history) && autoData.history.length > 0 && (
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1 text-xs">
+                    <div className="font-semibold">Riwayat Eksekusi Terbaru</div>
+                    <div className="max-h-36 overflow-y-auto space-y-1">
+                      {autoData.history.slice(0, 8).map((h: any) => (
+                        <div key={h.id} className="p-2 rounded bg-slate-50 dark:bg-slate-950 font-mono text-[11px] flex justify-between gap-2">
+                          <span className="truncate">{h.automation_id} ({h.status}, try {h.attempt_count ?? 1}x): {h.output_summary}</span>
+                          <span className="text-slate-400 shrink-0">{h.started_at}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 11b. MULTILINGUAL TRANSLATIONS & 13 BOT MODULES HONEST AUDIT */}
+          {activeModule === 'languages_modules' && (
+            <div className="space-y-6">
+              <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">Audit Jujur 13 Modul Inti Bot</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                  {modulesAuditList.map((m: any) => (
+                    <div key={m.id} className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-slate-900 dark:text-white">{m.name}</span>
+                        <span
+                          className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold ${
+                            m.status === 'operational'
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                              : m.status === 'partial'
+                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                                : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                          }`}
+                        >
+                          {m.status}
+                        </span>
+                      </div>
+                      <p className="text-slate-600 dark:text-slate-400">{m.summary}</p>
+                      <div className="text-[11px] font-mono text-slate-500">Dependency: {m.dependencies}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">Translation Override &amp; Review Nonbaku</h2>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+                  <input
+                    type="text"
+                    value={trKeyInput}
+                    onChange={(e) => setTrKeyInput(e.target.value)}
+                    placeholder="Key (mis. greeting.welcome)"
+                    className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-mono"
+                  />
+                  <select
+                    aria-label="Bahasa terjemahan"
+                    value={trLangInput}
+                    onChange={(e) => setTrLangInput(e.target.value as any)}
+                    className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                  >
+                    <option value="id">ID (Santai Nonbaku)</option>
+                    <option value="en">EN</option>
+                    <option value="ja">JA</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={trTextInput}
+                    onChange={(e) => setTrTextInput(e.target.value)}
+                    placeholder="Teks terjemahan"
+                    className="sm:col-span-2 px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!trKeyInput.trim() || !trTextInput.trim()) return;
+                    await apiFetch('/api/admin/translations', {
+                      method: 'POST',
+                      body: JSON.stringify({ key: trKeyInput.trim(), lang: trLangInput, text: trTextInput.trim() }),
+                    });
+                    setTrKeyInput('');
+                    setTrTextInput('');
+                    void loadModuleData('languages_modules');
+                  }}
+                  className="px-3.5 py-1.5 rounded-lg bg-blue-700 text-white text-xs font-semibold"
+                >
+                  Simpan Entri Terjemahan
+                </button>
+                <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-60 overflow-y-auto text-xs">
+                  {translationsList.map((tr) => (
+                    <div key={tr.id} className="py-2 flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <span className="font-mono font-semibold text-blue-700 dark:text-blue-400">[{tr.lang}] {tr.key}</span>
+                        <div className="text-slate-600 dark:text-slate-300">{tr.text}</div>
+                        <div className="text-[11px] text-slate-400">Status: {tr.review_status}</div>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await apiFetch(`/api/admin/translations/${encodeURIComponent(tr.id)}`, {
+                              method: 'PATCH',
+                              body: JSON.stringify({ action: 'review', status: 'approved' }),
+                            });
+                            void loadModuleData('languages_modules');
+                          }}
+                          className="px-2 py-1 rounded bg-emerald-700 text-white font-semibold"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await apiFetch(`/api/admin/translations/${encodeURIComponent(tr.id)}`, {
+                              method: 'PATCH',
+                              body: JSON.stringify({ action: 'review', status: 'rejected' }),
+                            });
+                            void loadModuleData('languages_modules');
+                          }}
+                          className="px-2 py-1 rounded bg-rose-700 text-white font-semibold"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}
@@ -2054,63 +2405,154 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
                     </div>
                   ))}
 
-                <div className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2.5 text-xs">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 space-y-3 text-xs">
+                  <div>
+                    <div className="font-bold text-slate-900 dark:text-white">Bahasa Terpisah: Menu/Bot vs AI Nexara</div>
+                    <div className="text-slate-500">
+                      Mengubah bahasa AI nggak akan mengubah bahasa Menu/Bot, dan sebaliknya. Bahasa Indonesia selalu pakai gaya santai nonbaku.
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <div className="font-bold text-slate-900 dark:text-white">Bahasa & Gaya Bot (v5.0.3)</div>
-                      <div className="text-slate-500">
-                        Bahasa Indonesia pakai gaya santai nonbaku secara default di seluruh balasan & menu WhatsApp.
+                      <div className="font-semibold mb-1.5">Bahasa Global Menu &amp; Bot</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(['id', 'en', 'ja'] as const).map((code) => {
+                          const cur = settingsList.find((s) => s.key === 'menu_language')?.value || 'id';
+                          return (
+                            <button
+                              key={`menu-${code}`}
+                              type="button"
+                              onClick={async () => {
+                                await apiFetch('/api/admin/settings', {
+                                  method: 'PATCH',
+                                  body: JSON.stringify({ updates: { menu_language: code, default_language: code, language_style: 'santai_nonbaku' } }),
+                                });
+                                void loadModuleData('backups_settings');
+                              }}
+                              className={`px-2.5 py-1 rounded font-semibold border ${cur === code ? 'border-blue-600 bg-blue-700 text-white' : 'border-slate-300 dark:border-slate-700'}`}
+                            >
+                              {code.toUpperCase()}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
-                    <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
-                      {settingsList.find((s) => s.key === 'language_style')?.value || 'santai_nonbaku'}
-                    </span>
+                    <div>
+                      <div className="font-semibold mb-1.5">Bahasa Global AI / Nexara</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(['id', 'en', 'ja'] as const).map((code) => {
+                          const cur = settingsList.find((s) => s.key === 'ai_language')?.value || 'id';
+                          return (
+                            <button
+                              key={`ai-${code}`}
+                              type="button"
+                              onClick={async () => {
+                                await apiFetch('/api/admin/settings', {
+                                  method: 'PATCH',
+                                  body: JSON.stringify({ updates: { ai_language: code } }),
+                                });
+                                void loadModuleData('backups_settings');
+                              }}
+                              className={`px-2.5 py-1 rounded font-semibold border ${cur === code ? 'border-blue-600 bg-blue-700 text-white' : 'border-slate-300 dark:border-slate-700'}`}
+                            >
+                              {code.toUpperCase()}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      { code: 'id', label: 'Indonesia (Santai Nonbaku)' },
-                      { code: 'en', label: 'English (Natural)' },
-                      { code: 'ja', label: '日本語 (Natural)' },
-                    ].map((langOpt) => {
-                      const currentLang = settingsList.find((s) => s.key === 'default_language')?.value || 'id';
-                      const isActive = currentLang === langOpt.code;
-                      return (
-                        <button
-                          key={langOpt.code}
-                          type="button"
-                          onClick={async () => {
-                            await apiFetch('/api/admin/settings', {
-                              method: 'PATCH',
-                              body: JSON.stringify({
-                                updates: {
-                                  default_language: langOpt.code,
-                                  language_style: 'santai_nonbaku',
-                                },
-                              }),
-                            });
-                            void loadModuleData('backups_settings');
-                          }}
-                          className={`px-3 py-1.5 rounded-lg font-semibold border transition-colors ${
-                            isActive
-                              ? 'border-blue-600 bg-blue-700 text-white'
-                              : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-500'
-                          }`}
-                        >
-                          {langOpt.label}
-                        </button>
-                      );
-                    })}
+                </div>
+
+                {/* Owner Profile & Passcode Rotation */}
+                <div className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2.5 text-xs">
+                  <div className="font-bold text-slate-900 dark:text-white">Identitas Owner (#owner) &amp; Ganti Passcode</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={ownerNameInput}
+                      onChange={(e) => setOwnerNameInput(e.target.value)}
+                      placeholder="Nama owner (mis. Pak Ujan)"
+                      className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                    />
+                    <input
+                      type="text"
+                      value={ownerNumInput}
+                      onChange={(e) => setOwnerNumInput(e.target.value)}
+                      placeholder="Nomor WhatsApp owner (mis. 62812...)"
+                      className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-mono"
+                    />
                   </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const updates: Record<string, string> = {};
+                      if (ownerNameInput.trim()) updates.owner_name_configured = ownerNameInput.trim();
+                      if (ownerNumInput.trim()) updates.owner_number_configured = ownerNumInput.trim();
+                      await apiFetch('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ updates }) });
+                      setOwnerNumInput('');
+                      setSettingsFeedback('Profil owner disimpan (nomor disamarkan).');
+                      void loadModuleData('backups_settings');
+                    }}
+                    className="px-3 py-1.5 rounded bg-blue-700 text-white font-semibold"
+                  >
+                    Simpan Nomor &amp; Nama Owner
+                  </button>
+
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <input
+                      type="password"
+                      value={curPassInput}
+                      onChange={(e) => setCurPassInput(e.target.value)}
+                      placeholder="Passcode lama"
+                      className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                    />
+                    <input
+                      type="password"
+                      value={newPassInput}
+                      onChange={(e) => setNewPassInput(e.target.value)}
+                      placeholder="Passcode baru (min 6)"
+                      className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const r = await apiFetch('/api/admin/auth/change-passcode', {
+                          method: 'POST',
+                          body: JSON.stringify({ currentPasscode: curPassInput, newPasscode: newPassInput }),
+                        });
+                        setCurPassInput('');
+                        setNewPassInput('');
+                        setSettingsFeedback(r?.message || r?.error || 'Selesai.');
+                      }}
+                      className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 font-semibold"
+                    >
+                      Ganti Passcode
+                    </button>
+                  </div>
+                  {settingsFeedback && <div className="text-blue-700 dark:text-blue-400">{settingsFeedback}</div>}
                 </div>
               </div>
 
               <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-base font-bold text-slate-900 dark:text-white">Backup Terenkripsi (AES-256-GCM)</h2>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900 dark:text-white">Backup Terenkripsi (AES-256-GCM)</h2>
+                    <p className="text-[11px] text-slate-500">
+                      {backupStatus?.hasEnvEncryptionKey
+                        ? 'Menggunakan BACKUP_ENCRYPTION_KEY dari environment server.'
+                        : 'BACKUP_ENCRYPTION_KEY belum disetel di server; masukkan passphrase manual minimal 12 karakter.'}
+                    </p>
+                  </div>
                   <button
                     type="button"
                     onClick={async () => {
-                      await apiFetch('/api/admin/backups/create', { method: 'POST' });
+                      setBackupFeedback(null);
+                      const res = await apiFetch('/api/admin/backups/create', {
+                        method: 'POST',
+                        body: JSON.stringify({ passphrase: backupPassphrase || undefined }),
+                      });
+                      setBackupFeedback(res?.ok ? `Backup ${res.filename} dibuat.` : res?.error || 'Gagal membuat backup.');
                       void loadModuleData('backups_settings');
                     }}
                     className="px-3 py-1.5 rounded-lg bg-blue-700 text-white text-xs font-semibold"
@@ -2118,15 +2560,105 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ token, onTokenCh
                     Buat Backup Baru
                   </button>
                 </div>
+
+                {!backupStatus?.hasEnvEncryptionKey && (
+                  <input
+                    type="password"
+                    value={backupPassphrase}
+                    onChange={(e) => setBackupPassphrase(e.target.value)}
+                    placeholder="Passphrase enkripsi/dekripsi backup (min 12 karakter)"
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-mono"
+                  />
+                )}
+
+                {backupFeedback && (
+                  <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/70 dark:bg-blue-950/30 text-xs text-blue-800 dark:text-blue-300">
+                    {backupFeedback}
+                  </div>
+                )}
+
                 <div className="space-y-2 text-xs">
                   {backupsList.length === 0 ? (
                     <p className="text-slate-500">Belum ada file backup dibuat.</p>
                   ) : (
                     backupsList.map((b) => (
-                      <div key={b.id} className="p-3 rounded-lg border border-slate-200 dark:border-slate-800">
-                        <div className="font-mono font-semibold">{b.filename}</div>
-                        <div className="text-slate-500">Ukuran: {b.size_bytes} B · SHA256: {b.checksum.slice(0, 16)}...</div>
-                        <div className="text-slate-400">{b.created_at}</div>
+                      <div key={b.id} className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="font-mono font-semibold">{b.filename}</div>
+                            <div className="text-slate-500">Ukuran: {b.size_bytes} B · SHA256: {b.checksum.slice(0, 16)}...</div>
+                            <div className="text-slate-400">{b.created_at}</div>
+                          </div>
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const res = await apiFetch(`/api/admin/backups/${b.id}/verify`, {
+                                  method: 'POST',
+                                  body: JSON.stringify({ passphrase: backupPassphrase || undefined }),
+                                });
+                                setBackupFeedback(
+                                  res?.ok
+                                    ? `Verifikasi OK (${res.filename}): ${res.counts?.commands ?? 0} command, ${res.counts?.settings ?? 0} settings.`
+                                    : res?.error || 'Verifikasi gagal.',
+                                );
+                              }}
+                              className="px-2.5 py-1 rounded border border-blue-600 text-blue-700 dark:text-blue-400 font-semibold"
+                            >
+                              Verify SHA-256
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRestoreConfirmId(restoreConfirmId === b.id ? null : b.id);
+                                setRestoreConfirmText('');
+                              }}
+                              className="px-2.5 py-1 rounded border border-rose-400 text-rose-700 dark:text-rose-400 font-semibold"
+                            >
+                              Restore
+                            </button>
+                          </div>
+                        </div>
+
+                        {restoreConfirmId === b.id && (
+                          <div className="p-2.5 rounded bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 space-y-2">
+                            <div className="font-semibold text-rose-800 dark:text-rose-300">
+                              Konfirmasi Ganda Restore: Ketik <code className="font-mono">RESTORE</code> (snapshot keamanan otomatis dibuat sebelum restore).
+                            </div>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={restoreConfirmText}
+                                onChange={(e) => setRestoreConfirmText(e.target.value)}
+                                placeholder="Ketik RESTORE"
+                                className="flex-1 px-2.5 py-1 rounded border border-rose-300 bg-white dark:bg-slate-900 font-mono"
+                              />
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const res = await apiFetch(`/api/admin/backups/${b.id}/restore`, {
+                                    method: 'POST',
+                                    body: JSON.stringify({
+                                      confirm: true,
+                                      confirmText: restoreConfirmText,
+                                      passphrase: backupPassphrase || undefined,
+                                    }),
+                                  });
+                                  setBackupFeedback(
+                                    res?.ok
+                                      ? `Restore sukses dari ${res.restoredFrom}. Snapshot aman: ${res.safetyBackup}`
+                                      : res?.error || 'Restore gagal.',
+                                  );
+                                  setRestoreConfirmId(null);
+                                  void loadModuleData('backups_settings');
+                                }}
+                                className="px-3 py-1 rounded bg-rose-700 text-white font-semibold"
+                              >
+                                Jalankan Restore
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))
                   )}

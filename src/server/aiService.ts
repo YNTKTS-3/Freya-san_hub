@@ -1,25 +1,48 @@
 import { GoogleGenAI } from '@google/genai';
 import { addAuditLog, addSystemLog, db } from './db';
+import { BotLang, normalizeBotLang } from '../core/botI18n';
+import { recordApiVaultUsage, resolveVaultKeyForRuntime } from './apiVaultService';
+import { getEffectiveLanguages } from './translationService';
 
-function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
-    return null;
+function getGeminiClient(): { client: GoogleGenAI; source: 'env' | 'vault' } | null {
+  const envKey = process.env.GEMINI_API_KEY?.trim();
+  if (envKey && envKey !== 'MY_GEMINI_API_KEY') {
+    return {
+      client: new GoogleGenAI({
+        apiKey: envKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      }),
+      source: 'env',
+    };
   }
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
+  const vaultEntry = resolveVaultKeyForRuntime('gemini', 'ai_agents');
+  if (vaultEntry.ok && vaultEntry.apiKey) {
+    return {
+      client: new GoogleGenAI({
+        apiKey: vaultEntry.apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      }),
+      source: 'vault',
+    };
+  }
+  return null;
+}
+
+function buildLanguageInstruction(lang: BotLang): string {
+  if (lang === 'en') {
+    return 'Respond in friendly, natural conversational English. Keep explanations concise and accurate.';
+  }
+  if (lang === 'ja') {
+    return '自然な日本語（親しみやすい丁寧語・カジュアルトーン）で分かりやすく正確に回答してください。';
+  }
+  return 'Jawab akurat pakai bahasa Indonesia santai sehari-hari (nonbaku) yang natural, ramah, dan gampang dipahami. Jangan kaku.';
 }
 
 export interface AiQueryResult {
   ok: boolean;
   provider: string;
   model: string;
+  language: BotLang;
   text: string;
   citations: Array<{ title: string; url: string }>;
   latencyMs: number;
@@ -29,11 +52,17 @@ export interface AiQueryResult {
 export async function runNexaraAiQuery(params: {
   prompt: string;
   userPhone?: string;
+  groupId?: string;
   modelName?: string;
+  aiLanguage?: BotLang;
   useWebGrounding?: boolean;
   systemPromptOverride?: string;
 }): Promise<AiQueryResult> {
   const started = Date.now();
+  const effectiveLang =
+    params.aiLanguage ||
+    getEffectiveLanguages({ userPhone: params.userPhone, groupId: params.groupId }).aiLang;
+
   const providerRow = db
     .prepare("SELECT * FROM ai_providers WHERE id = 'gemini-nexara'")
     .get() as { system_prompt: string; enabled: number } | undefined;
@@ -43,17 +72,18 @@ export async function runNexaraAiQuery(params: {
       ok: false,
       provider: 'gemini-nexara',
       model: params.modelName || 'gemini-4-hydrogen',
+      language: effectiveLang,
       text: '',
       citations: [],
       latencyMs: Date.now() - started,
-      error: 'Provider Nexara (Gemini) sedang dinonaktifkan oleh owner.',
+      error: 'Provider Nexara (Gemini) lagi dimatiin sementara sama Owner.',
     };
   }
 
-  const client = getGeminiClient();
+  const clientWrap = getGeminiClient();
   const model = params.modelName || 'gemini-4-hydrogen';
 
-  if (!client) {
+  if (!clientWrap) {
     db.prepare(
       `INSERT INTO ai_usage (provider_id, model_name, user_phone, prompt_preview, tokens_est, latency_ms, success, error_message)
        VALUES ('gemini-nexara', ?, ?, ?, 0, ?, 0, 'GEMINI_API_KEY not configured')`,
@@ -63,20 +93,22 @@ export async function runNexaraAiQuery(params: {
       ok: false,
       provider: 'gemini-nexara',
       model,
+      language: effectiveLang,
       text: '',
       citations: [],
       latencyMs: Date.now() - started,
-      error: 'GEMINI_API_KEY belum diatur di panel Secrets server nih. Tambahin GEMINI_API_KEY dulu di panel Secrets AI Studio ya.',
+      error: 'GEMINI_API_KEY belum diatur di panel Secrets server (atau Central API Vault) nih. Tambahin dulu biar AI bisa jawab ya.',
     };
   }
 
   try {
-    const systemInstruction =
+    const baseInstruction =
       params.systemPromptOverride ||
       providerRow?.system_prompt ||
-      'Kamu adalah Freya-san AI (Nexara). Jawab akurat pakai bahasa Indonesia santai yang natural dan kasih sumber kalau ada.';
+      'Kamu adalah Freya-san AI (Nexara).';
+    const systemInstruction = `${baseInstruction}\n${buildLanguageInstruction(effectiveLang)}`;
 
-    const response = await client.models.generateContent({
+    const response = await clientWrap.client.models.generateContent({
       model,
       contents: params.prompt,
       config: {
@@ -103,11 +135,15 @@ export async function runNexaraAiQuery(params: {
       `INSERT INTO ai_usage (provider_id, model_name, user_phone, prompt_preview, tokens_est, latency_ms, success)
        VALUES ('gemini-nexara', ?, ?, ?, ?, ?, 1)`,
     ).run(model, params.userPhone ?? null, params.prompt.slice(0, 120), tokensEst, latencyMs);
+    if (clientWrap.source === 'vault') {
+      recordApiVaultUsage('gemini', true);
+    }
 
     return {
       ok: true,
       provider: 'gemini-nexara',
       model,
+      language: effectiveLang,
       text,
       citations,
       latencyMs,
@@ -119,6 +155,9 @@ export async function runNexaraAiQuery(params: {
       `INSERT INTO ai_usage (provider_id, model_name, user_phone, prompt_preview, tokens_est, latency_ms, success, error_message)
        VALUES ('gemini-nexara', ?, ?, ?, 0, ?, 0, ?)`,
     ).run(model, params.userPhone ?? null, params.prompt.slice(0, 120), latencyMs, message);
+    if (clientWrap.source === 'vault') {
+      recordApiVaultUsage('gemini', false, message);
+    }
 
     addSystemLog('error', 'aiService', `Gemini call failed: ${message}`);
 
@@ -126,12 +165,94 @@ export async function runNexaraAiQuery(params: {
       ok: false,
       provider: 'gemini-nexara',
       model,
+      language: effectiveLang,
       text: '',
       citations: [],
       latencyMs,
       error: message,
     };
   }
+}
+
+const AI_AGENT_FORBIDDEN_PATTERNS: RegExp[] = [
+  /process\.env/i,
+  /creds\.json/i,
+  /owner_passcode/i,
+  /api_keys_vault/i,
+  /\bread\s+env\b/i,
+  /\bAPI\s+key\b/i,
+  /\b(rm\s+-rf|chmod|chown|curl\s+|wget\s+|bash\s+-c|sh\s+-c|exec\s*\()/i,
+  /\b(SELECT|DROP|DELETE|UPDATE|INSERT)\s+.+\bFROM\b/i,
+];
+
+export async function runAiAgentAction(params: {
+  agentId: string;
+  prompt: string;
+  actorRole: 'user' | 'group_admin' | 'owner';
+  actorPhone?: string;
+  riskLevel?: 'low' | 'medium' | 'high';
+  lang?: string;
+}): Promise<{ ok: boolean; agentName: string; text?: string; reply: string; denied?: boolean; error?: string }> {
+  const agent =
+    (db
+      .prepare(`SELECT id, name, role, COALESCE(risk_level, 'low') AS risk_level, COALESCE(enabled, 1) AS enabled FROM ai_agents WHERE id = ?`)
+      .get(params.agentId) as
+      | { id: string; name: string; role: string; risk_level: string; enabled: number }
+      | undefined) ||
+    (params.agentId === 'coordinator'
+      ? { id: 'coordinator', name: 'Operations & Coordinator Agent', role: 'Task Coordinator', risk_level: 'low', enabled: 1 }
+      : undefined);
+
+  if (!agent) {
+    return { ok: false, agentName: params.agentId, reply: '', error: 'Agent AI nggak ketemu.' };
+  }
+  if (!agent.enabled) {
+    return {
+      ok: false,
+      agentName: agent.name,
+      reply: `Agent *${agent.name}* lagi dimatiin sementara sama Owner.`,
+      denied: true,
+    };
+  }
+  const effectiveRisk = params.riskLevel || agent.risk_level;
+  if (effectiveRisk === 'high' && params.actorRole !== 'owner') {
+    addAuditLog(params.actorPhone || 'user', 'ai_agent.denied_role', agent.id, { role: params.actorRole, risk: effectiveRisk });
+    return {
+      ok: false,
+      agentName: agent.name,
+      reply: `Aksi agent *${agent.name}* berisiko tinggi dan khusus buat Owner aja ya.`,
+      error: `Aksi agent *${agent.name}* berisiko tinggi dan khusus buat Owner aja ya.`,
+      denied: true,
+    };
+  }
+
+  for (const rx of AI_AGENT_FORBIDDEN_PATTERNS) {
+    if (rx.test(params.prompt)) {
+      addAuditLog(params.actorPhone || params.actorRole, 'ai_agent.guardrail_blocked', agent.id, {
+        pattern: rx.source,
+      });
+      const deniedMsg = 'Permintaan itu ditolak otomatis oleh pagar keamanan Agent AI (nggak boleh akses terminal, file kredensial, atau query database langsung).';
+      return {
+        ok: false,
+        agentName: agent.name,
+        reply: deniedMsg,
+        error: deniedMsg,
+        denied: true,
+      };
+    }
+  }
+
+  const scoped = await runNexaraAiQuery({
+    prompt: `[Agent: ${agent.name} | Role: ${agent.role}]\n${params.prompt}`,
+    userPhone: params.actorPhone,
+    aiLanguage: normalizeBotLang(params.lang || getEffectiveLanguages({ userPhone: params.actorPhone }).aiLang),
+    systemPromptOverride: `Kamu menjalankan tugas sebagai agent "${agent.name}" (${agent.role}). Kamu TIDAK punya akses ke shell, file rahasia, atau database langsung.`,
+  });
+
+  if (!scoped.ok) {
+    return { ok: false, agentName: agent.name, reply: '', error: scoped.error };
+  }
+  return { ok: true, agentName: agent.name, text: scoped.text, reply: scoped.text };
 }
 
 export async function researchOfficial48GroupSource(params: {

@@ -15,16 +15,20 @@ import {
   addAuditLog,
   addSystemLog,
   applyUserBalanceAndExp,
+  claimOwnerPasscodeAtomic,
   createSessionToken,
   db,
   hashPasscode,
   isOwnerAuthConfigured,
+  maskSecretValue,
+  updateOwnerPasscode,
   verifyOwnerCredentials,
   verifySessionToken,
 } from './src/server/db';
 import { expireStaleSessions, getMaxQuizWrongAttempts, startGameSession, submitGameAction } from './src/server/gameEngine';
 import { validatePairingPhoneNumber, whatsappEngine } from './src/server/whatsappEngine';
 import { JKT48_TEAM_GROUPS } from './src/core/jkt48Classification';
+import { THIRTEEN_BOT_MODULES_AUDIT } from './src/core/moduleAudit';
 import {
   createRedeemCode,
   deleteRedeemCode,
@@ -61,7 +65,43 @@ import {
   updateMediaJobDelivery,
 } from './src/server/mediaService';
 import { buildMotionPhotoProtoPair, buildSoundStickerProtoPayload } from './src/server/waMediaProtocol';
-import { listMenuFallbackLogs } from './src/server/menuService';
+import {
+  buildMenuPayload,
+  deleteMenuCategory,
+  deleteMenuItem,
+  formatMenuFallbackText,
+  getMenuConfig,
+  listMenuFallbackLogs,
+  listMenuManagementState,
+  recordMenuFallbackLog,
+  updateMenuConfig,
+  upsertMenuCategory,
+  upsertMenuItem,
+} from './src/server/menuService';
+import {
+  deleteCustomCommand,
+  listCustomCommands,
+  runCustomCommandSandbox,
+  upsertCustomCommand,
+  validateCustomCommandSyntax,
+} from './src/server/customCommandService';
+import { deleteApiVaultEntry, listApiVaultEntries, upsertApiVaultEntry } from './src/server/apiVaultService';
+import {
+  listTranslations,
+  reviewTranslationEntry,
+  setGlobalSeparatedLanguage,
+  setGroupSeparatedLanguage,
+  setUserSeparatedLanguage,
+  upsertTranslationEntry,
+} from './src/server/translationService';
+import {
+  listAutomationsWithHistory,
+  runAutomationWithRetry,
+  upsertAutomation,
+} from './src/server/automationService';
+import { connectionProviderManager } from './src/server/providers/providerManager';
+import { metaCloudProvider } from './src/server/providers/metaCloudProvider';
+import { runAiAgentAction } from './src/server/aiService';
 
 const PORT = Number(process.env.PORT) || 3000;
 const FILES_BASE_DIR = path.resolve(process.cwd(), 'data', 'files');
@@ -106,24 +146,91 @@ function safeResolveInBase(baseDir: string, targetName: string): string | null {
   return resolved;
 }
 
+// Progressive login brute-force tracker per IP
+const authAttemptMap = new Map<string, { failures: number; lockedUntil: number }>();
+
+function checkAuthLockout(ip: string): { locked: boolean; retryAfterSec: number } {
+  const rec = authAttemptMap.get(ip);
+  if (!rec) return { locked: false, retryAfterSec: 0 };
+  const now = Date.now();
+  if (rec.lockedUntil > now) {
+    return { locked: true, retryAfterSec: Math.ceil((rec.lockedUntil - now) / 1000) };
+  }
+  return { locked: false, retryAfterSec: 0 };
+}
+
+function recordAuthFailure(ip: string): number {
+  const prev = authAttemptMap.get(ip) || { failures: 0, lockedUntil: 0 };
+  const failures = prev.failures + 1;
+  const lockMs = failures >= 5 ? Math.min(15 * 60_000, 15_000 * 2 ** (failures - 5)) : 0;
+  authAttemptMap.set(ip, { failures, lockedUntil: lockMs > 0 ? Date.now() + lockMs : 0 });
+  return failures;
+}
+
+function clearAuthFailures(ip: string) {
+  authAttemptMap.delete(ip);
+}
+
+function resolveBackupEncryptionKey(passphrase?: string): { ok: true; key: Buffer; source: 'env' | 'passphrase' } | { ok: false; error: string } {
+  const envKey = process.env.BACKUP_ENCRYPTION_KEY?.trim();
+  if (envKey && envKey.length >= 16) {
+    return { ok: true, key: crypto.createHash('sha256').update(envKey).digest(), source: 'env' };
+  }
+  const supplied = typeof passphrase === 'string' ? passphrase.trim() : '';
+  if (supplied.length >= 12) {
+    return { ok: true, key: crypto.createHash('sha256').update(supplied).digest(), source: 'passphrase' };
+  }
+  return {
+    ok: false,
+    error: 'BACKUP_ENCRYPTION_KEY (min 16 karakter) belum disetel di server. Isi passphrase manual minimal 12 karakter untuk enkripsi/dekripsi backup.',
+  };
+}
+
+function isSameOriginMutation(req: Request): boolean {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method.toUpperCase())) return true;
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  const hostHeader = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  if (!hostHeader) return true;
+  try {
+    const parsedOrigin = new URL(origin);
+    return parsedOrigin.host.toLowerCase() === hostHeader.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 async function startServer() {
   const app = express();
   app.set('trust proxy', 1);
-  app.use(express.json({ limit: '2mb' }));
+  app.use(
+    express.json({
+      limit: '2mb',
+      verify: (req, _res, buf) => {
+        (req as Request & { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
 
   // Baseline security headers (no X-Frame-Options to preserve AI Studio iFrame preview)
-  app.use((_req, res, next) => {
+  app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    next();
+    if (req.path.startsWith('/api/admin') || req.path.startsWith('/api/auth')) {
+      if (!isSameOriginMutation(req)) {
+        return res.status(403).json({ ok: false, error: 'Permintaan lintas-origin tidak diizinkan.' });
+      }
+    }
+    return next();
   });
 
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });
+  const authedClients = new Set<WebSocket>();
 
   const broadcastEvent = (eventType: string, payload: unknown) => {
     const packet = JSON.stringify({ eventType, payload, ts: new Date().toISOString() });
-    wss.clients.forEach((client) => {
+    authedClients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(packet);
       }
@@ -132,14 +239,77 @@ async function startServer() {
 
   whatsappEngine.setBroadcaster(broadcastEvent);
 
-  wss.on('connection', (ws) => {
-    ws.send(
-      JSON.stringify({
-        eventType: 'wa:status',
-        payload: whatsappEngine.getStatus(),
-        ts: new Date().toISOString(),
-      }),
-    );
+  wss.on('connection', (ws, req) => {
+    let isAuthed = false;
+    const protocolHeader = req.headers['sec-websocket-protocol'];
+    if (typeof protocolHeader === 'string') {
+      const parts = protocolHeader.split(',').map((p) => p.trim());
+      for (const part of parts) {
+        const tokenCandidate = part.startsWith('bearer.') ? part.slice('bearer.'.length) : part;
+        const verified = verifySessionToken(tokenCandidate);
+        if (verified.valid && verified.role === 'owner') {
+          isAuthed = true;
+          break;
+        }
+      }
+    }
+
+    const sendWelcomeStatus = () => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      ws.send(
+        JSON.stringify({
+          eventType: 'auth:ok',
+          payload: { role: 'owner' },
+          ts: new Date().toISOString(),
+        }),
+      );
+      ws.send(
+        JSON.stringify({
+          eventType: 'wa:status',
+          payload: whatsappEngine.getStatus(),
+          ts: new Date().toISOString(),
+        }),
+      );
+    };
+
+    if (isAuthed) {
+      authedClients.add(ws);
+      sendWelcomeStatus();
+    } else {
+      const authTimeout = setTimeout(() => {
+        if (!isAuthed && ws.readyState === WebSocket.OPEN) {
+          ws.close(4001, 'Authentication timeout');
+        }
+      }, 10_000);
+
+      ws.on('message', (raw) => {
+        if (isAuthed) return;
+        try {
+          const parsed = JSON.parse(String(raw));
+          if (parsed?.type === 'auth' && typeof parsed.token === 'string') {
+            const verified = verifySessionToken(parsed.token.trim());
+            if (verified.valid && verified.role === 'owner') {
+              isAuthed = true;
+              clearTimeout(authTimeout);
+              authedClients.add(ws);
+              sendWelcomeStatus();
+              return;
+            }
+          }
+          clearTimeout(authTimeout);
+          ws.close(4003, 'Unauthorized WebSocket client');
+        } catch {
+          clearTimeout(authTimeout);
+          ws.close(4003, 'Malformed auth frame');
+        }
+      });
+
+      ws.on('close', () => clearTimeout(authTimeout));
+    }
+
+    ws.on('close', () => {
+      authedClients.delete(ws);
+    });
   });
 
   // ------------------------------------------------------------------
@@ -599,6 +769,83 @@ async function startServer() {
   });
 
   // ------------------------------------------------------------------
+  // 3b. META WHATSAPP BUSINESS CLOUD API PUBLIC WEBHOOK (HMAC-SHA256)
+  // ------------------------------------------------------------------
+  app.get('/api/webhooks/meta-whatsapp', (req, res) => {
+    const check = metaCloudProvider.verifyWebhookChallenge({
+      mode: typeof req.query['hub.mode'] === 'string' ? req.query['hub.mode'] : undefined,
+      token: typeof req.query['hub.verify_token'] === 'string' ? req.query['hub.verify_token'] : undefined,
+      challenge: typeof req.query['hub.challenge'] === 'string' ? req.query['hub.challenge'] : undefined,
+    });
+    return res.status(check.status).send(check.body);
+  });
+
+  app.post('/api/webhooks/meta-whatsapp', async (req, res) => {
+    const rawBody = (req as Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(req.body ?? {}));
+    const sigCheck = metaCloudProvider.verifyWebhookSignature(rawBody, req.header('x-hub-signature-256'));
+    if (!sigCheck.ok) {
+      return res.status(403).json({ ok: false, error: sigCheck.reason });
+    }
+
+    const activeProvider = connectionProviderManager.getActiveProviderId();
+    const messages = metaCloudProvider.extractIncomingMessages(req.body);
+    if (activeProvider !== 'meta_cloud') {
+      addSystemLog('warn', 'metaWebhook', `Webhook diterima tapi provider aktif adalah ${activeProvider}; pesan dilewati agar tidak tabrakan.`);
+      return res.json({ ok: true, processed: 0, skippedReason: `active_provider=${activeProvider}` });
+    }
+
+    let processed = 0;
+    for (const incoming of messages) {
+      const outcome = await whatsappEngine.processIncomingMessage({
+        chatId: incoming.chatId,
+        chatScope: 'private',
+        senderPhone: incoming.fromPhone,
+        senderName: incoming.senderName,
+        text: incoming.text,
+        selectedRowId: incoming.selectedRowId,
+        isGroupAdmin: false,
+        messageId: incoming.messageId,
+        source: 'whatsapp',
+      });
+      processed += 1;
+
+      if (outcome.interactiveMenu) {
+        const menuCfg = getMenuConfig();
+        if (menuCfg.mode === 'text_only') {
+          await metaCloudProvider.sendText(incoming.fromPhone, outcome.replyText);
+          recordMenuFallbackLog({
+            chatId: incoming.chatId,
+            menuKey: outcome.interactiveMenu.menuKey,
+            mode: 'text_fallback',
+            reason: 'Mode menu diatur ke teks saja',
+            clientInfo: 'meta_cloud',
+          });
+        } else {
+          const sentList = await metaCloudProvider.sendInteractiveList(
+            incoming.fromPhone,
+            outcome.interactiveMenu,
+            outcome.replyText,
+          );
+          if (!sentList.ok) {
+            await metaCloudProvider.sendText(incoming.fromPhone, outcome.replyText);
+            recordMenuFallbackLog({
+              chatId: incoming.chatId,
+              menuKey: outcome.interactiveMenu.menuKey,
+              mode: 'text_fallback',
+              reason: sentList.error || 'Meta interactive list fallback ke teks',
+              clientInfo: 'meta_cloud',
+            });
+          }
+        }
+      } else if (outcome.replyText) {
+        await metaCloudProvider.sendText(incoming.fromPhone, outcome.replyText);
+      }
+    }
+
+    return res.json({ ok: true, processed });
+  });
+
+  // ------------------------------------------------------------------
   // 4. OWNER AUTHENTICATION (First-run Claim or Env Passcode + Bearer Token)
   // ------------------------------------------------------------------
   app.get('/api/auth/status', (_req, res) => {
@@ -611,6 +858,14 @@ async function startServer() {
   });
 
   app.post('/api/auth/claim', rateLimit(10), (req, res) => {
+    const ip = req.ip || 'local';
+    const lockout = checkAuthLockout(ip);
+    if (lockout.locked) {
+      return res.status(429).json({
+        ok: false,
+        error: `Terlalu banyak percobaan gagal. Coba lagi dalam ${lockout.retryAfterSec} detik.`,
+      });
+    }
     const authState = isOwnerAuthConfigured();
     if (authState.hasEnvPasscode || authState.hasClaimedHash) {
       return res.status(403).json({ ok: false, error: 'Akses owner udah diklaim. Login aja ya.' });
@@ -620,23 +875,35 @@ async function startServer() {
       return res.status(400).json({ ok: false, error: 'Passcode owner minimal 6 karakter.' });
     }
     const hashed = hashPasscode(passcode);
-    db.prepare(
-      `INSERT INTO settings (key, value, is_secret, updated_at) VALUES ('owner_passcode_hash', ?, 1, datetime('now'))`,
-    ).run(hashed);
+    const claimResult = claimOwnerPasscodeAtomic(hashed);
+    if (!claimResult.ok) {
+      return res.status(403).json({ ok: false, error: claimResult.error });
+    }
+    clearAuthFailures(ip);
     addAuditLog('owner', 'auth.first_run_claim', 'owner_console');
     const token = createSessionToken('owner');
     return res.json({ ok: true, token });
   });
 
   app.post('/api/auth/login', rateLimit(15), (req, res) => {
+    const ip = req.ip || 'local';
+    const lockout = checkAuthLockout(ip);
+    if (lockout.locked) {
+      return res.status(429).json({
+        ok: false,
+        error: `Terlalu banyak percobaan passcode salah. Tunggu ${lockout.retryAfterSec} detik ya.`,
+      });
+    }
     const passcode = String(req.body?.passcode || '');
     if (!passcode) {
       return res.status(400).json({ ok: false, error: 'Passcode wajib diisi.' });
     }
     if (!verifyOwnerCredentials(passcode)) {
-      addAuditLog('anonymous', 'auth.login_failed', 'owner_console');
+      const failures = recordAuthFailure(ip);
+      addAuditLog('anonymous', 'auth.login_failed', 'owner_console', { failures });
       return res.status(401).json({ ok: false, error: 'Passcode owner tidak sesuai.' });
     }
+    clearAuthFailures(ip);
     addAuditLog('owner', 'auth.login_success', 'owner_console');
     const token = createSessionToken('owner');
     return res.json({ ok: true, token });
@@ -673,7 +940,7 @@ async function startServer() {
 
     res.json({
       ok: true,
-      ownerPhone: `+${ownerPhone}`,
+      ownerPhone: ownerPhone ? `+${ownerPhone}` : '',
       wa: whatsappEngine.getStatus(),
       totalUsers,
       totalGroups,
@@ -690,6 +957,23 @@ async function startServer() {
         cpuLoad1m: Number(os.loadavg()[0].toFixed(2)),
       },
     });
+  });
+
+  app.post('/api/admin/auth/change-passcode', (req, res) => {
+    const currentPasscode = String(req.body?.currentPasscode || '');
+    const newPasscode = String(req.body?.newPasscode || '');
+    if (!currentPasscode || !verifyOwnerCredentials(currentPasscode)) {
+      return res.status(401).json({ ok: false, error: 'Passcode saat ini salah.' });
+    }
+    if (newPasscode.length < 6) {
+      return res.status(400).json({ ok: false, error: 'Passcode baru minimal 6 karakter.' });
+    }
+    const upd = updateOwnerPasscode(hashPasscode(newPasscode));
+    if (!upd.ok) {
+      return res.status(400).json({ ok: false, error: upd.error });
+    }
+    addAuditLog('owner', 'auth.passcode_changed', 'owner_console');
+    return res.json({ ok: true, message: 'Passcode owner berhasil diperbarui.' });
   });
 
   // Command Manager + Inventory Audit
@@ -898,7 +1182,9 @@ async function startServer() {
       return res.status(400).json({ ok: false, error: 'Teks pesan wajib diisi.' });
     }
     const scope = chatScope === 'group' ? 'group' : 'private';
-    const phone = String(senderPhone || whatsappEngine.getOwnerPhoneNormalized()).replace(/\D/g, '');
+    const phone =
+      String(senderPhone || whatsappEngine.getOwnerPhoneNormalized() || '6280000000001').replace(/\D/g, '') ||
+      '6280000000001';
     let quotedMediaBuffer: Buffer | undefined;
     if (typeof quotedMediaBase64 === 'string' && quotedMediaBase64.trim()) {
       const cleanedB64 = quotedMediaBase64.replace(/^data:[^;]+;base64,/, '');
@@ -931,8 +1217,243 @@ async function startServer() {
     res.json({ ok: true, result });
   });
 
+  app.get('/api/admin/whatsapp/providers', (_req, res) => {
+    const st = whatsappEngine.getStatus();
+    const list = connectionProviderManager.listProviders({
+      hasStoredAuth: Boolean(st.hasStoredAuth),
+      connectionState: st.connectionState,
+      libraryVersion: 'baileys v7',
+    });
+    res.json({ ok: true, ...list });
+  });
+
+  app.post('/api/admin/whatsapp/providers/select', async (req, res) => {
+    const providerId = req.body?.providerId === 'meta_cloud' ? 'meta_cloud' : 'baileys';
+    const outcome = connectionProviderManager.setActiveProvider(providerId, 'owner');
+    res.json(outcome);
+  });
+
+  app.patch('/api/admin/whatsapp/providers/meta', (req, res) => {
+    const out = metaCloudProvider.updateConfig(req.body ?? {});
+    res.json(out);
+  });
+
+  app.post('/api/admin/whatsapp/providers/meta/verify', async (_req, res) => {
+    const result = await metaCloudProvider.verifyConnectivity();
+    res.status(result.ok ? 200 : 400).json(result);
+  });
+
+  app.post('/api/admin/whatsapp/refresh-qr', async (_req, res) => {
+    const result = await whatsappEngine.refreshQr('owner');
+    addAuditLog('owner', 'whatsapp.refresh_qr', 'primary', { ok: result.ok });
+    res.status(result.ok ? 200 : 409).json(result);
+  });
+
+  // Menu Management & Interactive Preview
+  app.get('/api/admin/menus', (_req, res) => {
+    res.json({ ok: true, ...listMenuManagementState() });
+  });
+
+  app.patch('/api/admin/menus/config', (req, res) => {
+    const config = updateMenuConfig({
+      mode: req.body?.mode,
+      defaultLanguage: req.body?.defaultLanguage,
+      footerText: req.body?.footerText,
+      actor: 'owner',
+    });
+    res.json({ ok: true, config });
+  });
+
+  app.post('/api/admin/menus/categories', (req, res) => {
+    const title = String(req.body?.title || '').trim();
+    const target = String(req.body?.target_menu_key || '').trim();
+    if (!title || !target) {
+      return res.status(400).json({ ok: false, error: 'Judul kategori dan target menu key wajib diisi.' });
+    }
+    const category = upsertMenuCategory({ ...req.body, title, target_menu_key: target });
+    addAuditLog('owner', 'menu.category_upsert', category.id);
+    return res.json({ ok: true, category });
+  });
+
+  app.delete('/api/admin/menus/categories/:id', (req, res) => {
+    const deleted = deleteMenuCategory(req.params.id);
+    if (!deleted) return res.status(404).json({ ok: false, error: 'Kategori menu tidak ketemu.' });
+    addAuditLog('owner', 'menu.category_delete', req.params.id);
+    return res.json({ ok: true });
+  });
+
+  app.post('/api/admin/menus/items', (req, res) => {
+    const label = String(req.body?.label || '').trim();
+    const cmdName = String(req.body?.command_name || '').trim();
+    const catId = String(req.body?.category_id || '').trim();
+    if (!label || !cmdName || !catId) {
+      return res.status(400).json({ ok: false, error: 'Category ID, label, dan command_name wajib diisi.' });
+    }
+    const item = upsertMenuItem({ ...req.body, category_id: catId, label, command_name: cmdName });
+    addAuditLog('owner', 'menu.item_upsert', item.id);
+    return res.json({ ok: true, item });
+  });
+
+  app.delete('/api/admin/menus/items/:id', (req, res) => {
+    const deleted = deleteMenuItem(req.params.id);
+    if (!deleted) return res.status(404).json({ ok: false, error: 'Item menu tidak ketemu.' });
+    addAuditLog('owner', 'menu.item_delete', req.params.id);
+    return res.json({ ok: true });
+  });
+
+  app.post('/api/admin/menus/preview', (req, res) => {
+    const menuKey = String(req.body?.menuKey || 'main');
+    const lang = String(req.body?.lang || getMenuConfig().defaultLanguage || 'id');
+    const prefix = String(req.body?.prefix || '#');
+    const built = buildMenuPayload(menuKey, {
+      prefix,
+      lang,
+      isOwner: Boolean(req.body?.isOwner ?? true),
+      isGroupAdmin: Boolean(req.body?.isGroupAdmin ?? true),
+      chatScope: req.body?.chatScope === 'group' ? 'group' : 'private',
+      senderName: String(req.body?.senderName || 'Owner Preview'),
+    });
+    const fallbackText = formatMenuFallbackText(built.menu, built.headerText, lang);
+    const totalRows = built.menu.sections.reduce((acc, s) => acc + s.rows.length, 0);
+    return res.json({
+      ok: true,
+      mode: getMenuConfig().mode,
+      interactiveMenu: built.menu,
+      headerText: built.headerText,
+      fallbackText,
+      totalRows,
+      metaCloudRowCapWarning: totalRows > 10 ? `Menu ini punya ${totalRows} baris; Meta Cloud API otomatis memangkas hingga maksimal 10 baris per pesan.` : null,
+    });
+  });
+
   app.get('/api/admin/menus/fallbacks', (_req, res) => {
     res.json({ ok: true, logs: listMenuFallbackLogs(50) });
+  });
+
+  // Custom Command Builder & Sandbox
+  app.get('/api/admin/custom-commands', (_req, res) => {
+    res.json({ ok: true, commands: listCustomCommands() });
+  });
+
+  app.post('/api/admin/custom-commands/validate', (req, res) => {
+    const check = validateCustomCommandSyntax({
+      name: String(req.body?.name || ''),
+      aliases: Array.isArray(req.body?.aliases) ? req.body.aliases : [],
+      builderMode: req.body?.builder_mode === 'script' ? 'script' : 'visual',
+      visualBlocks: Array.isArray(req.body?.visual_blocks) ? req.body.visual_blocks : [],
+      scriptTemplate: String(req.body?.script_template || ''),
+    });
+    res.json(check);
+  });
+
+  app.post('/api/admin/custom-commands/test', (req, res) => {
+    const resRun = runCustomCommandSandbox({
+      name: String(req.body?.name || 'preview'),
+      builderMode: req.body?.builder_mode === 'script' ? 'script' : 'visual',
+      visualBlocks: Array.isArray(req.body?.visual_blocks) ? req.body.visual_blocks : [],
+      scriptTemplate: String(req.body?.script_template || ''),
+      sampleArgs: String(req.body?.sampleArgs || ''),
+      sampleSenderName: String(req.body?.sampleSenderName || 'Owner Sandbox'),
+      chatScope: req.body?.chatScope === 'group' ? 'group' : 'private',
+    });
+    res.status(resRun.ok ? 200 : 400).json(resRun);
+  });
+
+  app.post('/api/admin/custom-commands', (req, res) => {
+    const resSave = upsertCustomCommand(req.body ?? {}, 'owner');
+    if (!resSave.ok) {
+      return res.status(400).json({ ok: false, errors: resSave.errors || [], error: (resSave.errors || []).join(' ') });
+    }
+    return res.json({ ok: true, command: resSave.command });
+  });
+
+  app.delete('/api/admin/custom-commands/:name', (req, res) => {
+    const deleted = deleteCustomCommand(req.params.name, 'owner');
+    if (!deleted) return res.status(404).json({ ok: false, error: 'Custom command tidak ketemu.' });
+    return res.json({ ok: true });
+  });
+
+  // Central API Manager (Encrypted Vault)
+  app.get('/api/admin/api-vault', (_req, res) => {
+    res.json({ ok: true, items: listApiVaultEntries() });
+  });
+
+  app.post('/api/admin/api-vault', (req, res) => {
+    const out = upsertApiVaultEntry(req.body ?? {}, 'owner');
+    if (!out.ok) return res.status(400).json({ ok: false, error: out.error });
+    return res.json({ ok: true, item: out.item });
+  });
+
+  app.patch('/api/admin/api-vault/:id', (req, res) => {
+    const out = upsertApiVaultEntry({ ...(req.body ?? {}), id: req.params.id }, 'owner');
+    if (!out.ok) return res.status(400).json({ ok: false, error: out.error });
+    return res.json({ ok: true, item: out.item });
+  });
+
+  app.delete('/api/admin/api-vault/:id', (req, res) => {
+    const deleted = deleteApiVaultEntry(req.params.id, 'owner');
+    if (!deleted) return res.status(404).json({ ok: false, error: 'API entry tidak ketemu.' });
+    return res.json({ ok: true });
+  });
+
+  // Multilingual Translation Center & Separated Menu vs AI Language Controls
+  app.get('/api/admin/translations', (req, res) => {
+    const rows = listTranslations({
+      lang: typeof req.query.lang === 'string' ? req.query.lang : undefined,
+      status: typeof req.query.status === 'string' ? req.query.status : undefined,
+    });
+    res.json({ ok: true, translations: rows });
+  });
+
+  app.post('/api/admin/translations', (req, res) => {
+    const out = upsertTranslationEntry(req.body ?? {}, 'owner');
+    if (!out.ok) return res.status(400).json({ ok: false, error: out.error });
+    return res.json({ ok: true, item: out.item });
+  });
+
+  app.patch('/api/admin/translations/:id', (req, res) => {
+    const action = req.body?.action;
+    if (action === 'review') {
+      const out = reviewTranslationEntry(
+        req.params.id,
+        req.body?.status === 'rejected' ? 'rejected' : 'approved',
+        'owner',
+        typeof req.body?.notes === 'string' ? req.body.notes : undefined,
+      );
+      if (!out.ok) return res.status(400).json({ ok: false, error: out.error });
+      return res.json({ ok: true });
+    }
+    const out = upsertTranslationEntry({ ...(req.body ?? {}), id: req.params.id }, 'owner');
+    if (!out.ok) return res.status(400).json({ ok: false, error: out.error });
+    return res.json({ ok: true, item: out.item });
+  });
+
+  app.patch('/api/admin/groups/:id/languages', (req, res) => {
+    const groupId = decodeURIComponent(req.params.id);
+    if ('menu_language' in (req.body ?? {})) {
+      setGroupSeparatedLanguage(groupId, 'menu', req.body.menu_language ?? null, 'owner');
+    }
+    if ('ai_language' in (req.body ?? {})) {
+      setGroupSeparatedLanguage(groupId, 'ai', req.body.ai_language ?? null, 'owner');
+    }
+    return res.json({ ok: true });
+  });
+
+  app.patch('/api/admin/users/:phone/languages', (req, res) => {
+    const phone = req.params.phone.replace(/\D/g, '');
+    if ('menu_language' in (req.body ?? {})) {
+      setUserSeparatedLanguage(phone, 'menu', req.body.menu_language ?? null);
+    }
+    if ('ai_language' in (req.body ?? {})) {
+      setUserSeparatedLanguage(phone, 'ai', req.body.ai_language ?? null);
+    }
+    addAuditLog('owner', 'user.language_update', maskPhoneNumberForGroup(phone));
+    return res.json({ ok: true });
+  });
+
+  // 13 Bot Modules Honest Audit Registry
+  app.get('/api/admin/modules-audit', (_req, res) => {
+    res.json({ ok: true, modules: THIRTEEN_BOT_MODULES_AUDIT });
   });
 
   // Media Lab (#tolive & #sa) Real Pipeline Testing & Job Logs
@@ -947,10 +1468,11 @@ async function startServer() {
       ? Buffer.from(mediaBase64.replace(/^data:[^;]+;base64,/, ''), 'base64')
       : await generateMediaPipelineSample(mode);
 
+    const ownerOrDemoPhone = whatsappEngine.getOwnerPhoneNormalized() || '6280000000001';
     const art = await convertMediaToLivePhotoBundle({
       mediaBuffer,
       mediaKind: mode,
-      userPhone: whatsappEngine.getOwnerPhoneNormalized(),
+      userPhone: ownerOrDemoPhone,
       lang: 'id',
     });
 
@@ -962,7 +1484,7 @@ async function startServer() {
     const stillSha = crypto.createHash('sha256').update(b.stillBuffer).digest();
     const vidSha = crypto.createHash('sha256').update(b.motionVideoBuffer).digest();
     const protoPair = buildMotionPhotoProtoPair({
-      jid: `${whatsappEngine.getOwnerPhoneNormalized()}@s.whatsapp.net`,
+      jid: `${ownerOrDemoPhone}@s.whatsapp.net`,
       stillMeta: {
         url: 'https://mmg.whatsapp.net/v/t62.7118-24/sample-still',
         directPath: '/v/t62.7118-24/sample-still',
@@ -1043,7 +1565,7 @@ async function startServer() {
       visualBuffer,
       visualKind,
       audioBuffer,
-      userPhone: whatsappEngine.getOwnerPhoneNormalized(),
+      userPhone: whatsappEngine.getOwnerPhoneNormalized() || '6280000000001',
       lang: 'id',
     });
 
@@ -1428,6 +1950,28 @@ async function startServer() {
     res.json({ ok: true });
   });
 
+  app.patch('/api/admin/plugins/:id', (req, res) => {
+    const { enabled, dependencies_json, documentation, last_error, config_json } = req.body ?? {};
+    db.prepare(`
+      UPDATE plugins
+      SET enabled = COALESCE(?, enabled),
+          dependencies_json = COALESCE(?, dependencies_json),
+          documentation = COALESCE(?, documentation),
+          last_error = COALESCE(?, last_error),
+          config_json = COALESCE(?, config_json)
+      WHERE id = ?
+    `).run(
+      enabled !== undefined ? (enabled ? 1 : 0) : null,
+      dependencies_json !== undefined ? (typeof dependencies_json === 'string' ? dependencies_json : JSON.stringify(dependencies_json)) : null,
+      documentation ?? null,
+      last_error ?? null,
+      config_json !== undefined ? (typeof config_json === 'string' ? config_json : JSON.stringify(config_json)) : null,
+      req.params.id,
+    );
+    addAuditLog('owner', 'plugin.update', req.params.id);
+    res.json({ ok: true });
+  });
+
   app.get('/api/admin/ai', (_req, res) => {
     const providers = db.prepare('SELECT * FROM ai_providers').all();
     const models = db.prepare('SELECT * FROM ai_models').all();
@@ -1441,6 +1985,21 @@ async function startServer() {
     const prompt = String(req.body?.prompt || 'Sapa owner Freya-san Hub dalam satu kalimat ringkas.');
     const result = await runNexaraAiQuery({ prompt, userPhone: 'owner-test', modelName: req.body?.modelName });
     res.status(result.ok ? 200 : 400).json(result);
+  });
+
+  app.post('/api/admin/ai/agents/:id/run', async (req, res) => {
+    const prompt = String(req.body?.prompt || '').trim();
+    if (!prompt) {
+      return res.status(400).json({ ok: false, error: 'Prompt task agent wajib diisi.' });
+    }
+    const result = await runAiAgentAction({
+      agentId: req.params.id,
+      prompt,
+      actorRole: 'owner',
+      riskLevel: req.body?.riskLevel === 'high' ? 'high' : req.body?.riskLevel === 'medium' ? 'medium' : 'low',
+      lang: typeof req.body?.lang === 'string' ? req.body.lang : undefined,
+    });
+    return res.status(result.ok ? 200 : 403).json(result);
   });
 
   app.patch('/api/admin/ai/providers/:id', (req, res) => {
@@ -1468,9 +2027,13 @@ async function startServer() {
   });
 
   app.get('/api/admin/automations', (_req, res) => {
-    const automations = db.prepare('SELECT * FROM automations').all();
-    const history = db.prepare('SELECT * FROM scheduled_tasks ORDER BY id DESC LIMIT 30').all();
-    res.json({ ok: true, automations, history });
+    res.json({ ok: true, ...listAutomationsWithHistory() });
+  });
+
+  app.post('/api/admin/automations', (req, res) => {
+    const out = upsertAutomation(req.body ?? {}, 'owner');
+    if (!out.ok) return res.status(400).json({ ok: false, error: out.error });
+    return res.json({ ok: true, automation: out.automation });
   });
 
   app.post('/api/admin/automations/:id/toggle', (req, res) => {
@@ -1480,11 +2043,10 @@ async function startServer() {
     res.json({ ok: true });
   });
 
-  app.post('/api/admin/automations/:id/run', (req, res) => {
-    db.prepare(`UPDATE automations SET run_count = run_count + 1, last_run_at = datetime('now') WHERE id = ?`).run(req.params.id);
-    db.prepare(`INSERT INTO scheduled_tasks (automation_id, status, output_summary, finished_at) VALUES (?, 'completed', 'Eksekusi manual oleh owner berhasil.', datetime('now'))`).run(req.params.id);
-    addAuditLog('owner', 'automation.run_now', req.params.id);
-    res.json({ ok: true });
+  app.post('/api/admin/automations/:id/run', async (req, res) => {
+    const out = await runAutomationWithRetry(req.params.id, 'owner');
+    if (!out.ok) return res.status(400).json(out);
+    return res.json(out);
   });
 
   // Logs, Audit, Console (strict allowlist)
@@ -1570,13 +2132,26 @@ async function startServer() {
     res.json({ ok: true });
   });
 
-  // Encrypted Backup & Restore
+  // Encrypted Backup, Integrity Verification & Restore
+  app.get('/api/admin/backups/status', (_req, res) => {
+    const envConfigured = Boolean(process.env.BACKUP_ENCRYPTION_KEY && process.env.BACKUP_ENCRYPTION_KEY.trim().length >= 16);
+    res.json({
+      ok: true,
+      hasEnvEncryptionKey: envConfigured,
+      requiresManualPassphrase: !envConfigured,
+    });
+  });
+
   app.get('/api/admin/backups', (_req, res) => {
     const backups = db.prepare('SELECT * FROM backups ORDER BY created_at DESC').all();
     res.json({ ok: true, backups });
   });
 
-  app.post('/api/admin/backups/create', (_req, res) => {
+  app.post('/api/admin/backups/create', (req, res) => {
+    const keyInfo = resolveBackupEncryptionKey(req.body?.passphrase);
+    if (!keyInfo.ok) {
+      return res.status(400).json({ ok: false, error: keyInfo.error });
+    }
     const snapshot = {
       exportedAt: new Date().toISOString(),
       version: '5.0',
@@ -1584,14 +2159,16 @@ async function startServer() {
       prefixes: db.prepare('SELECT * FROM prefixes').all(),
       commands: db.prepare('SELECT name, enabled, permission, cooldown_sec, daily_limit FROM commands').all(),
       redeemCodes: db.prepare('SELECT * FROM redeem_codes').all(),
+      customCommands: db.prepare('SELECT * FROM custom_commands').all(),
+      menuConfigs: db.prepare('SELECT * FROM menu_configs').all(),
+      menuCategories: db.prepare('SELECT * FROM menu_categories').all(),
+      menuItems: db.prepare('SELECT * FROM menu_items').all(),
       fortyEightGroups: db.prepare('SELECT * FROM forty_eight_groups').all(),
       fortyEightMembers: db.prepare('SELECT * FROM forty_eight_members').all(),
     };
     const json = JSON.stringify(snapshot, null, 2);
-    const keySource = process.env.BACKUP_ENCRYPTION_KEY || 'freya-san-hub-default-local-backup-key';
-    const key = crypto.createHash('sha256').update(keySource).digest();
     const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const cipher = crypto.createCipheriv('aes-256-gcm', keyInfo.key, iv);
     const encrypted = Buffer.concat([cipher.update(json, 'utf8'), cipher.final()]);
     const tag = cipher.getAuthTag();
     const envelope = JSON.stringify({
@@ -1601,7 +2178,7 @@ async function startServer() {
       data: encrypted.toString('hex'),
     });
 
-    const id = `bkp-${Date.now()}`;
+    const id = `bkp-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
     const filename = `freya-backup-${Date.now()}.enc.json`;
     const checksum = crypto.createHash('sha256').update(envelope).digest('hex');
     const outPath = safeResolveInBase(BACKUPS_BASE_DIR, filename)!;
@@ -1613,18 +2190,165 @@ async function startServer() {
       Buffer.byteLength(envelope),
       checksum,
     );
-    addAuditLog('owner', 'backup.create', filename);
-    res.json({ ok: true, id, filename, checksum });
+    addAuditLog('owner', 'backup.create', filename, { keySource: keyInfo.source });
+    res.json({ ok: true, id, filename, checksum, keySource: keyInfo.source });
   });
 
-  // Settings (including Blue Tick Control & Maintenance Mode)
+  app.post('/api/admin/backups/:id/verify', (req, res) => {
+    const bkp = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id) as
+      | { id: string; filename: string; checksum: string }
+      | undefined;
+    if (!bkp) return res.status(404).json({ ok: false, error: 'Record backup tidak ketemu.' });
+    const targetPath = safeResolveInBase(BACKUPS_BASE_DIR, bkp.filename);
+    if (!targetPath || !fs.existsSync(targetPath)) {
+      return res.status(404).json({ ok: false, error: 'File backup tidak ditemukan di disk.' });
+    }
+    const envelopeStr = fs.readFileSync(targetPath, 'utf8');
+    const actualChecksum = crypto.createHash('sha256').update(envelopeStr).digest('hex');
+    if (actualChecksum !== bkp.checksum) {
+      return res.status(400).json({ ok: false, error: 'Checksum SHA-256 tidak cocok (file corrupt atau berubah).' });
+    }
+    const keyInfo = resolveBackupEncryptionKey(req.body?.passphrase);
+    if (!keyInfo.ok) {
+      return res.status(400).json({ ok: false, error: keyInfo.error });
+    }
+    try {
+      const env = JSON.parse(envelopeStr);
+      const decipher = crypto.createDecipheriv('aes-256-gcm', keyInfo.key, Buffer.from(env.iv, 'hex'));
+      decipher.setAuthTag(Buffer.from(env.tag, 'hex'));
+      const decrypted = Buffer.concat([decipher.update(Buffer.from(env.data, 'hex')), decipher.final()]).toString('utf8');
+      const parsed = JSON.parse(decrypted);
+      return res.json({
+        ok: true,
+        id: bkp.id,
+        filename: bkp.filename,
+        checksumValid: true,
+        exportedAt: parsed.exportedAt,
+        counts: {
+          settings: Array.isArray(parsed.settings) ? parsed.settings.length : 0,
+          commands: Array.isArray(parsed.commands) ? parsed.commands.length : 0,
+          customCommands: Array.isArray(parsed.customCommands) ? parsed.customCommands.length : 0,
+          redeemCodes: Array.isArray(parsed.redeemCodes) ? parsed.redeemCodes.length : 0,
+        },
+      });
+    } catch {
+      return res.status(400).json({ ok: false, error: 'Dekripsi AES-256-GCM gagal. Periksa BACKUP_ENCRYPTION_KEY atau passphrase.' });
+    }
+  });
+
+  app.post('/api/admin/backups/:id/restore', (req, res) => {
+    if (req.body?.confirm !== true || String(req.body?.confirmText || '').trim().toUpperCase() !== 'RESTORE') {
+      return res.status(400).json({ ok: false, error: 'Konfirmasi ganda wajib diisi (confirm=true & ketik RESTORE).' });
+    }
+    const bkp = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id) as
+      | { id: string; filename: string; checksum: string }
+      | undefined;
+    if (!bkp) return res.status(404).json({ ok: false, error: 'Record backup tidak ketemu.' });
+    const targetPath = safeResolveInBase(BACKUPS_BASE_DIR, bkp.filename);
+    if (!targetPath || !fs.existsSync(targetPath)) {
+      return res.status(404).json({ ok: false, error: 'File backup tidak ditemukan di disk.' });
+    }
+    const envelopeStr = fs.readFileSync(targetPath, 'utf8');
+    if (crypto.createHash('sha256').update(envelopeStr).digest('hex') !== bkp.checksum) {
+      return res.status(400).json({ ok: false, error: 'Checksum backup gagal verifikasi sebelum restore.' });
+    }
+    const keyInfo = resolveBackupEncryptionKey(req.body?.passphrase);
+    if (!keyInfo.ok) {
+      return res.status(400).json({ ok: false, error: keyInfo.error });
+    }
+
+    let snapshot: any;
+    try {
+      const env = JSON.parse(envelopeStr);
+      const decipher = crypto.createDecipheriv('aes-256-gcm', keyInfo.key, Buffer.from(env.iv, 'hex'));
+      decipher.setAuthTag(Buffer.from(env.tag, 'hex'));
+      const decrypted = Buffer.concat([decipher.update(Buffer.from(env.data, 'hex')), decipher.final()]).toString('utf8');
+      snapshot = JSON.parse(decrypted);
+    } catch {
+      return res.status(400).json({ ok: false, error: 'Dekripsi gagal; restore dibatalkan tanpa mengubah database.' });
+    }
+
+    // Create pre-restore safety snapshot on disk
+    const safetySnap = JSON.stringify({
+      exportedAt: new Date().toISOString(),
+      reason: 'pre_restore_safety',
+      settings: db.prepare('SELECT key, value FROM settings WHERE is_secret = 0').all(),
+      prefixes: db.prepare('SELECT * FROM prefixes').all(),
+      commands: db.prepare('SELECT name, enabled, permission, cooldown_sec, daily_limit FROM commands').all(),
+    });
+    const sIv = crypto.randomBytes(12);
+    const sCipher = crypto.createCipheriv('aes-256-gcm', keyInfo.key, sIv);
+    const sEnc = Buffer.concat([sCipher.update(safetySnap, 'utf8'), sCipher.final()]);
+    const sEnv = JSON.stringify({
+      alg: 'aes-256-gcm',
+      iv: sIv.toString('hex'),
+      tag: sCipher.getAuthTag().toString('hex'),
+      data: sEnc.toString('hex'),
+    });
+    const safetyFile = `pre-restore-${Date.now()}.enc.json`;
+    fs.writeFileSync(safeResolveInBase(BACKUPS_BASE_DIR, safetyFile)!, sEnv, 'utf8');
+    db.prepare(`INSERT INTO backups (id, filename, encrypted, size_bytes, checksum, created_by) VALUES (?, ?, 1, ?, ?, 'system_pre_restore')`).run(
+      `bkp-pre-${Date.now()}`,
+      safetyFile,
+      Buffer.byteLength(sEnv),
+      crypto.createHash('sha256').update(sEnv).digest('hex'),
+    );
+
+    db.transaction(() => {
+      if (Array.isArray(snapshot.settings)) {
+        const upStmt = db.prepare(
+          `INSERT INTO settings (key, value, is_secret, updated_at) VALUES (?, ?, 0, datetime('now'))
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now') WHERE is_secret = 0`,
+        );
+        for (const s of snapshot.settings) {
+          if (s?.key && s.value !== undefined) upStmt.run(String(s.key), String(s.value));
+        }
+      }
+      if (Array.isArray(snapshot.commands)) {
+        const cmdStmt = db.prepare(
+          `UPDATE commands SET enabled = ?, permission = ?, cooldown_sec = ?, daily_limit = ? WHERE name = ?`,
+        );
+        for (const c of snapshot.commands) {
+          if (c?.name) {
+            cmdStmt.run(c.enabled ? 1 : 0, String(c.permission || 'public'), Number(c.cooldown_sec || 0), Number(c.daily_limit || 0), String(c.name));
+          }
+        }
+      }
+      if (Array.isArray(snapshot.customCommands)) {
+        const ccStmt = db.prepare(`
+          INSERT OR REPLACE INTO custom_commands (
+            id, name, description, aliases_json, mode, builder_mode, visual_blocks_json,
+            script_source, script_template, permission, cooldown_sec, enabled, usage_count, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'))
+        `);
+        for (const cc of snapshot.customCommands) {
+          if (cc?.name) {
+            const m = cc.builder_mode || cc.mode || 'visual';
+            const tpl = cc.script_template || cc.script_source || '';
+            ccStmt.run(
+              cc.id || cc.name, cc.name, cc.description || '', cc.aliases_json || '[]',
+              m, m, cc.visual_blocks_json || '[]',
+              tpl, tpl, cc.permission || 'public',
+              Number(cc.cooldown_sec || 0), cc.enabled ? 1 : 0, Number(cc.usage_count || 0),
+              cc.created_at || null,
+            );
+          }
+        }
+      }
+    })();
+
+    addAuditLog('owner', 'backup.restore', bkp.filename, { safetyBackup: safetyFile });
+    return res.json({ ok: true, restoredFrom: bkp.filename, safetyBackup: safetyFile });
+  });
+
+  // Settings (including Blue Tick Control, Maintenance Mode, Separated Languages, Owner Phone/Name)
   app.get('/api/admin/settings', (_req, res) => {
     const rows = db.prepare('SELECT key, value, is_secret, updated_at FROM settings ORDER BY key ASC').all() as Array<{
       key: string; value: string; is_secret: number; updated_at: string;
     }>;
     const sanitized = rows.map((r) => ({
       ...r,
-      value: r.key === 'owner_passcode_hash' ? '********' : r.value,
+      value: r.is_secret === 1 ? (r.key === 'owner_passcode_hash' ? '********' : maskSecretValue(r.value)) : r.value,
     }));
     res.json({ ok: true, settings: sanitized });
   });
@@ -1636,6 +2360,8 @@ async function startServer() {
     }
     const allowedKeys = new Set([
       'default_language',
+      'menu_language',
+      'ai_language',
       'language_style',
       'default_theme',
       'blue_tick_enabled',
@@ -1643,17 +2369,27 @@ async function startServer() {
       'auto_nexara',
       'antidelete_pc',
       'multi_room_concurrent',
+      'wa_menu_mode',
       'owner_number_configured',
+      'owner_name_configured',
     ]);
+    const secretKeys = new Set(['owner_number_configured']);
     const stmt = db.prepare(
-      `INSERT INTO settings (key, value, is_secret, updated_at) VALUES (?, ?, 0, datetime('now'))
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+      `INSERT INTO settings (key, value, is_secret, updated_at) VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, is_secret = excluded.is_secret, updated_at = datetime('now')`,
     );
     db.transaction(() => {
       for (const [k, v] of Object.entries(updates)) {
         if (allowedKeys.has(k)) {
-          stmt.run(k, String(v));
-          addAuditLog('owner', 'settings.update', k, { value: k === 'owner_number_configured' ? '[redacted]' : v });
+          const isSec = secretKeys.has(k) ? 1 : 0;
+          const cleanVal = k === 'owner_number_configured' ? String(v).replace(/\D/g, '') : String(v);
+          stmt.run(k, cleanVal, isSec);
+          if (k === 'menu_language' && (cleanVal === 'id' || cleanVal === 'en' || cleanVal === 'ja')) {
+            setGlobalSeparatedLanguage('menu', cleanVal, 'owner');
+          } else if (k === 'ai_language' && (cleanVal === 'id' || cleanVal === 'en' || cleanVal === 'ja')) {
+            setGlobalSeparatedLanguage('ai', cleanVal, 'owner');
+          }
+          addAuditLog('owner', 'settings.update', k, { value: isSec ? '[redacted]' : cleanVal });
         }
       }
     })();

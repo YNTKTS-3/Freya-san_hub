@@ -126,7 +126,7 @@ const GENERAL_COMMANDS: CommandDefinition[] = [
   mk('everyone', 'GENERAL', { description: 'Mention semua anggota grup (khusus admin di grup).', permission: 'group_admin' }),
   mk('infobot', 'GENERAL', { description: 'Lihat info singkat platform, versi, dan status bot.' }),
   mk('menu', 'GENERAL', { aliases: ['help'], description: 'Buka menu interaktif WhatsApp atau daftar menu teks lengkap.' }),
-  mk('owner', 'GENERAL', { description: 'Lihat kontak Owner resmi tanpa sebar nomor pribadi sembarangan.' }),
+  mk('owner', 'GENERAL', { description: 'Tampilin kartu kontak resmi Owner Freya-san Hub v5.0 (Pak Ujan) pakai vCard.' }),
   mk('ping', 'GENERAL', { description: 'Cek kecepatan respon server dan kesiapan bot.' }),
   mk('resend', 'GENERAL', { description: 'Kirim ulang pesan atau media terakhir yang diizinkan di sesi ini.' }),
   mk('runtime', 'GENERAL', { description: 'Cek udah berapa lama server dan bot jalan.' }),
@@ -338,20 +338,20 @@ const STICKER_COMMANDS: CommandDefinition[] = [
   'toimg', 'trigger', 'ttp', 'ziptelestick',
 ].map((name) =>
   mk(name, 'STICKER', {
-    aliases: name === 'stickeraudio' ? ['sa'] : [],
+    aliases: name === 'stickeraudio' ? ['stikeraudio', 'sa'] : [],
     description:
       name === 'brat2'
         ? 'Bikin stiker brat teks & emoji (maks 100 karakter).'
         : name === 'toimg'
         ? 'Ubah stiker WebP jadi gambar PNG.'
         : name === 'stickeraudio'
-        ? 'Ubah video bersuara atau gambar+audio jadi stiker WhatsApp WebP animasi bersuara Opus.'
+        ? 'Ubah video bersuara atau gambar+audio jadi kombo stiker WebP animasi + voice note Opus tanpa batas durasi.'
         : `Pengolah stiker WhatsApp (${name}) lengkap dengan watermark.`,
     example:
       name === 'brat2'
         ? '.brat2 santai aja ✨'
         : name === 'stickeraudio'
-        ? '.sa (balas video atau gambar+audio)'
+        ? '#sa (balas video atau gambar+audio)'
         : `.${name}`,
     requiredPlugin: ['setwm', 'delsetwm', 'brat2', 'toimg', 'stickeraudio'].includes(name) ? null : 'sticker-processor',
     status: ['setwm', 'delsetwm', 'brat2', 'toimg', 'stickeraudio'].includes(name) ? 'active' : 'pending_integration',

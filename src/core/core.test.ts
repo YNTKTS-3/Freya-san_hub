@@ -118,7 +118,7 @@ test('Game rules enforce single-session lock, scope isolation, verified-only 48G
   assert.ok(scoreNoHint > scoreWithHint);
 
   assert.equal(isIndonesianPhoneNumber('+62 812-3456-7890'), true);
-  assert.equal(isIndonesianPhoneNumber('085129878352'), true);
+  assert.equal(isIndonesianPhoneNumber('081200009999'), true);
   assert.equal(isIndonesianPhoneNumber('+1 415 555 0101'), false);
 
   assert.equal(maskPhoneNumberForGroup('6281234567890'), '6281-****-890');

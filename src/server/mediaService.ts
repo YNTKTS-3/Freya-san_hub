@@ -723,8 +723,8 @@ export async function convertStickerAudioBundle(params: {
   const lang = normalizeBotLang(params.lang);
   const compatNote =
     lang === 'en'
-      ? 'Protocol note: Uses StickerMessage.audioMessage (WAWebProtobufsE2E field 26) with Animated WebP + OGG/Opus. Playback icon requires WhatsApp Beta 2.26.41.3+/2.26.47.1+ on recipient devices.'
-      : 'Catatan protokol: Mengemas Animated WebP (512x512 + EXIF) & OGG/Opus ke field WAProto StickerMessage.audioMessage (tag 26). Ikon putar suara hanya aktif di WhatsApp klien terbaru (Android Beta 2.26.41.3+/2.26.47.1+); klien lama menampilkan stiker animasi tanpa suara.';
+      ? 'Delivery mode: LINE-style Dual Output — Animated WebP sticker (max 10s) followed by Opus PTT voice note (unlimited audio duration).'
+      : 'Mode kirim: Kombo Stiker Bersuara ala LINE — Stiker WebP animasi (512x512, maks 10 detik) disusul langsung voice note Opus (durasi audio bebas tanpa batas!).';
 
   if (!params.visualBuffer || params.visualBuffer.length === 0 || !params.visualKind || params.visualKind === 'none' || params.visualKind === 'audio') {
     return {
@@ -732,9 +732,9 @@ export async function convertStickerAudioBundle(params: {
       kind: 'text_only',
       honestLimitation: compatNote,
       caption:
-        'Cara pakai #sa / #stickeraudio:\n' +
-        '1. Balas video bersuara langsung dengan #sa, ATAU\n' +
-        '2. Balas stiker/gambar dengan #sa dulu, lalu balas audio/VN dengan #sa untuk memasangkannya.',
+        'Cara pakai #sa / #stikeraudio:\n' +
+        '1. Balas video bersuara langsung pakai #sa, ATAU\n' +
+        '2. Balas stiker/gambar pakai #sa dulu, lalu balas audio/VN pakai #sa buat digabungin.',
     };
   }
 
@@ -766,14 +766,14 @@ export async function convertStickerAudioBundle(params: {
       '--outdir', outDir,
       '--pack-name', params.packName || 'Freya-san Hub v5.0',
       '--pack-publisher', params.packPublisher || botText(lang).botFooter,
-      '--max-duration', '8.0',
+      '--max-duration', '10.0',
     ];
     if (aPath) {
       pyArgs.push('--audio', aPath);
     }
 
     const { stdout } = await execFileAsync('python3', pyArgs, {
-      timeout: 30000,
+      timeout: 60000,
       maxBuffer: 2 * 1024 * 1024,
     });
     const parsed = JSON.parse(stdout.trim());
@@ -824,9 +824,9 @@ export async function convertStickerAudioBundle(params: {
         audioValidation: parsed.audioValidation || {},
       },
       caption:
-        `Sound Sticker (#sa) siap! Animated WebP ${Math.round(stickerBuffer.length / 1024)} KB (` +
+        `Kombo Stiker Bersuara (#stikeraudio / #sa) siap! Animated WebP ${Math.round(stickerBuffer.length / 1024)} KB (` +
         `${parsed.webpValidation?.anmfFrames ?? 1} frame, 512x512, EXIF pack aktif) + ` +
-        `Opus ${parsed.audioSeconds}s (${Math.round(audioBuffer.length / 1024)} KB).\n\n${compatNote}`,
+        `Voice Note Opus ${parsed.audioSeconds}s (${Math.round(audioBuffer.length / 1024)} KB).\n\n${compatNote}`,
     };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : 'Kesalahan pipeline #sa';

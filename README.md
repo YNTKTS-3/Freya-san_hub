@@ -6,7 +6,7 @@ Platform terpadu **WhatsApp Bot Engine (`@whiskeysockets/baileys`)**, **48Group 
 
 ## Fitur Utama
 
-- **WhatsApp Bot Engine (`@whiskeysockets/baileys`)**: Mendukung **10 prefix aktif bawaan** (`. , ? ! * @ # $ & /`) dengan maupun tanpa spasi, interactive list menu + text fallback, serta **WhatsApp Command Simulator** langsung di Owner Console.
+- **WhatsApp Bot Engine (`@whiskeysockets/baileys` + Meta Cloud API)**: Mendukung **10 prefix aktif bawaan** (`. , ? ! * @ # $ & /`) dengan maupun tanpa spasi, *Provider Switcher* (Baileys Linked Devices QR/Pairing Code 8-state atau Meta Business Cloud API Webhook), *Menu Management DB* (`hybrid` / `interactive_only` / `text_only`), serta **WhatsApp Command Simulator** dan **Media Pipeline Lab** (`#tolive` & `#sa`) langsung di Owner Console.
 - **48Group Center (Modul Mandiri)**:
   - **Difficulty Explorer (JKT48)**: Klasifikasi era terstruktur dalam 3 tingkat kesulitan tetap:
     - **Level 1 — Mudah–Menengah**: *New Era – Fight Era* (`2022 – 2026`)
@@ -15,10 +15,10 @@ Platform terpadu **WhatsApp Bot Engine (`@whiskeysockets/baileys`)**, **48Group 
   - **Team Explorer (JKT48)**: Navigasi bertingkat **Old** (*Team J, Team KIII, Team T*), **New** (*Team Love, Team Dream, Team Passion*), dan **Other / Unassigned** beserta riwayat transfer & alumni.
   - **Intelligence & Game Center**: Profil member, grup, diskografi, theater archive, kalender event, istilah/budaya, verifikasi sumber resmi, serta kuis 48Group yang dapat difilter per Level/Era maupun Team.
 - **Game Center & Activity Engine**: Permainan Private & Group terpisah dengan session lock anti-bertumpuk, papan peringkat, Studio Kertas Folio (`.folio`), dan **Klaim Kode Redeem** publik.
-- **Owner Console & Redeem Management**:
-  - Autentikasi passcode owner + Bearer token in-memory.
-  - **Platform Management → Redeem Management**: 5 submenu (*Redeem Codes, Reward Builder, Claim History, Redeem Analytics, Redeem Settings*), validator handler terpusat, transaksi atomik SQLite, dan riwayat klaim permanen.
-  - Command Manager (`586` command teraudit), Prefix Manager, Live Chat Monitor (WebSocket `/ws`), File Manager, Encrypted Backup (`AES-256-GCM`), dan Audit Console.
+- **Owner Console & Platform Management**:
+  - Autentikasi passcode owner + Bearer token in-memory + WebSocket `/ws` terautentikasi.
+  - **Platform Management**: Redeem Management (5 submenu), Limit/Economy/Game Bank, serta **Central API Manager** terenkripsi `AES-256-GCM`.
+  - **Kontrol Bot & Kecerdasan**: Command Manager (`586` command teraudit), Menu Management, **Custom Command Builder** (Visual + Script Sandbox), Prefix Manager, Bahasa Terpisah Menu vs AI, Audit 13 Modul Inti Bot, File Manager, Encrypted Backup (`AES-256-GCM` + verifikasi SHA-256 & double-confirm restore), dan Audit Console.
 
 ---
 
@@ -40,9 +40,9 @@ Pastikan perangkat lokal atau server memiliki:
 1. **Clone repository & buka di VS Code**
 
    ```bash
-   git clone <https://github.com/YNTKTS-3/Freya-san_hub>
+   git clone <URL_REPO_ANDA>
    cd Freya-san_hub
-   bash install.sh
+   npm install
    npm run dev
    ```
 
@@ -112,7 +112,7 @@ Pastikan perangkat lokal atau server memiliki:
 Jangan jalankan Vite dev middleware di server produksi. Build frontend terlebih dahulu, lalu jalankan server dengan `NODE_ENV=production`:
 
 ```bash
-npm ci
+npm install
 npm run build
 NODE_ENV=production PORT=3000 npm start
 ```
@@ -190,7 +190,7 @@ FROM node:22-bookworm-slim
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN npm install --omit=dev || npm install
 
 COPY . .
 RUN npm run build

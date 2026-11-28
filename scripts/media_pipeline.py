@@ -514,24 +514,22 @@ def process_stickeraudio(
     is_animated_src = v_codec in ("h264", "hevc", "vp8", "vp9", "av1", "mpeg4", "gif", "webp") and (v_dur > 0.25 or nb_frames > 1)
 
     a_dur = float(a_probe.get("format", {}).get("duration") or 3.0)
-    target_audio_dur = min(10.0, max(0.5, a_dur))
 
-    # 1. Encode audio track -> OGG/Opus (48kHz mono)
+    # 1. Encode audio track -> OGG/Opus (48kHz mono, 128k VBR, TANPA batas durasi -t)
     p_ogg = run_cmd([
         "ffmpeg", "-y", "-i", a_source, "-vn",
-        "-t", str(target_audio_dur),
-        "-c:a", "libopus", "-ar", "48000", "-ac", "1", "-b:a", "32k", "-application", "voip",
+        "-c:a", "libopus", "-ar", "48000", "-ac", "1", "-b:a", "128k", "-vbr", "on",
         ogg_path,
     ])
     if p_ogg.returncode != 0 or not Path(ogg_path).is_file():
         return {"ok": False, "error": f"Opus audio encoding failed: {p_ogg.stderr.decode('utf-8', 'replace')[:240]}"}
 
-    # 2. Encode visual -> 512x512 Animated WebP strictly under 500 KB
+    # 2. Encode visual -> 512x512 Animated WebP strictly under 500 KB (maks 10 detik)
     exif_bytes = build_whatsapp_sticker_exif(pack_name, pack_publisher, ["🔊", "✨"])
     attempts = [
-        (15, 62, min(max_duration, 8.0)),
-        (12, 45, min(max_duration, 6.0)),
-        (10, 32, min(max_duration, 5.0)),
+        (15, 62, min(max_duration, 10.0)),
+        (12, 45, min(max_duration, 8.0)),
+        (10, 32, min(max_duration, 6.0)),
         (8, 22, min(max_duration, 4.0)),
     ]
 

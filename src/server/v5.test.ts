@@ -42,6 +42,7 @@ import {
 import { startGameSession, submitGameAction } from './gameEngine';
 import { generateBratSticker, generateMockupImage } from './mediaService';
 import {
+  buildBaileysInteractiveListProto,
   buildBaileysListPayload,
   buildMenuPayload,
   formatMenuFallbackText,
@@ -491,7 +492,7 @@ test('10. Brat stickers, 13 [SIMULASI] mockups, honest capability checks & anti-
     isGroupAdmin: false,
     source: 'simulator',
   });
-  assert.match(saNoAudio.replyText, /sticker|\.webp|WhatsApp/i);
+  assert.match(saNoAudio.replyText, /stikeraudio|stickeraudio|stiker|\.webp/i);
 
   const upswchOffline = await whatsappEngine.processIncomingMessage({
     chatId: `${TEST_PHONES[7]}@s.whatsapp.net`,
@@ -812,7 +813,13 @@ test('11. Real #tolive (MotionPhoto JPEG+XMP+MP4) & #sa (Animated WebP+EXIF + Op
 });
 
 test('12. v5.0.3 Interactive List menus, fallback navigation, strict permissions, game precedence & language switch', async () => {
-  const ownerPhone = whatsappEngine.getOwnerPhoneNormalized();
+  const prevOwnerRow = db.prepare("SELECT value FROM settings WHERE key = 'owner_number_configured'").get() as { value: string } | undefined;
+  const ownerPhone = prevOwnerRow?.value?.replace(/\D/g, '') || '6281200009999';
+  db.prepare(
+    `INSERT INTO settings (key, value, is_secret, updated_at) VALUES ('owner_number_configured', ?, 1, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run(ownerPhone);
+  try {
   const userPhone = TEST_PHONES[10];
   const userChatId = `${userPhone}@s.whatsapp.net`;
 
@@ -1089,13 +1096,22 @@ test('12. v5.0.3 Interactive List menus, fallback navigation, strict permissions
   assert.equal(setId.status, 'ok');
   assert.match(setId.replyText, /Indonesia/i);
   db.prepare(`DELETE FROM whatsapp_menu_sessions WHERE user_phone = ?`).run(ownerPhone);
+  } finally {
+    db.prepare(
+      `INSERT INTO settings (key, value, is_secret, updated_at) VALUES ('owner_number_configured', ?, 1, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    ).run(prevOwnerRow?.value || '');
+  }
 });
 
 test('13. Baileys Pairing Code, QR Code, Reset Koneksi, Reset Sesi Penuh, Locking & History', async () => {
   // 1) Validasi nomor telepon pairing code
   assert.equal(validatePairingPhoneNumber('').ok, false);
   assert.equal(validatePairingPhoneNumber('abc123456').ok, false);
-  assert.equal(validatePairingPhoneNumber('081234567890').ok, false);
+  const localAuto = validatePairingPhoneNumber('081234567890');
+  assert.equal(localAuto.ok, true);
+  assert.equal(localAuto.normalized, '6281234567890');
+  assert.equal(validatePairingPhoneNumber('0012345678').ok, false);
   assert.equal(validatePairingPhoneNumber('62123').ok, false);
   assert.equal(validatePairingPhoneNumber('621234567890123456').ok, false);
   const validPhone = validatePairingPhoneNumber('+62 812-3456-7890');
@@ -1226,20 +1242,27 @@ test('13. Baileys Pairing Code, QR Code, Reset Koneksi, Reset Sesi Penuh, Lockin
     assert.equal((db.prepare(`SELECT COUNT(*) AS c FROM prefixes`).get() as { c: number }).c, prefixesBefore);
     assert.equal((db.prepare(`SELECT COUNT(*) AS c FROM redeem_codes`).get() as { c: number }).c, redeemBefore);
 
-    // 5) Re-auth pakai Pairing Code setelah Reset Sesi Penuh + Cancel + Expired + Berhasil
+    // 5) Re-auth pakai Pairing Code setelah Reset Sesi Penuh + 08->628 sanitization + 3000ms delay default + Cancel + Expired + Berhasil
+    assert.equal(whatsappEngine.getPairingStabilizeDelayMs(), 3000);
+    assert.equal(validatePairingPhoneNumber('081234567890').normalized, '6281234567890');
+    assert.equal(validatePairingPhoneNumber('+62 812-0000-9999').normalized, '6281200009999');
+
     const badPhoneRes = await whatsappEngine.connect({
       method: 'pairing_code',
-      phoneNumber: '081234567890',
+      phoneNumber: '0012345678',
       actor: 'test-owner',
     });
     assert.equal(badPhoneRes.ok, false);
     assert.equal(badPhoneRes.pairingStatus, 'failed');
 
-    // Request pairing code valid -> qr trigger requestPairingCode -> cancel
+    // Pakai delay kecil khusus unit test mock socket (tetap test konversi 08xx -> 628xx)
+    whatsappEngine.setPairingStabilizeDelayForTests(15);
+
+    // Request pairing code pakai format 08xx lokal -> otomatis jadi 628xx -> cancel
     nextCredsRegistered = false;
     const pairCancelPromise = whatsappEngine.connect({
       method: 'pairing_code',
-      phoneNumber: '+62 812-3456-7890',
+      phoneNumber: '0812-3456-7890',
       actor: 'test-owner',
     });
     await new Promise((r) => setTimeout(r, 30));
@@ -1320,6 +1343,7 @@ test('13. Baileys Pairing Code, QR Code, Reset Koneksi, Reset Sesi Penuh, Lockin
       assert.deepEqual(findFormalIndonesianViolations(row.detail), []);
     }
   } finally {
+    whatsappEngine.setPairingStabilizeDelayForTests(null);
     await whatsappEngine.disconnect('test-cleanup').catch(() => {});
     whatsappEngine.setSocketFactoryForTests(null);
     whatsappEngine.setAuthDirForTests(null);
@@ -1339,5 +1363,144 @@ test('13. Baileys Pairing Code, QR Code, Reset Koneksi, Reset Sesi Penuh, Lockin
     `).run();
   }
 });
+
+test('14. #owner vCard 3.0, #stikeraudio alias + unlimited audio (>10s), and 13-category Interactive List proto', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { convertStickerAudioBundle, generateMediaPipelineSample } = await import('./mediaService');
+
+  // 1) #owner produces vCard 3.0 from configured owner setting (never hardcoded) without formal violations
+  clearRateLimitBucketsForTests();
+  const prevOwnerNumRow = db.prepare("SELECT value FROM settings WHERE key = 'owner_number_configured'").get() as { value: string } | undefined;
+  const prevOwnerNameRow = db.prepare("SELECT value FROM settings WHERE key = 'owner_name_configured'").get() as { value: string } | undefined;
+  db.prepare(
+    `INSERT INTO settings (key, value, is_secret, updated_at) VALUES ('owner_number_configured', '6281200009999', 1, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run();
+  db.prepare(
+    `INSERT INTO settings (key, value, is_secret, updated_at) VALUES ('owner_name_configured', 'Pak Ujan', 0, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run();
+  try {
+    const ownerRes = await whatsappEngine.processIncomingMessage({
+      chatId: `${TEST_PHONES[0]}@s.whatsapp.net`,
+      chatScope: 'private',
+      senderPhone: TEST_PHONES[0],
+      senderName: 'OwnerCardTester',
+      text: '#owner',
+      isGroupAdmin: false,
+      source: 'simulator',
+    });
+    assert.equal(ownerRes.status, 'ok');
+    assert.ok(ownerRes.contactCard);
+    assert.equal(ownerRes.contactCard!.displayName, 'Pak Ujan');
+    assert.equal(ownerRes.contactCard!.phone, '6281200009999');
+    assert.match(ownerRes.contactCard!.vcard, /BEGIN:VCARD[\s\S]*FN:Pak Ujan[\s\S]*ORG:Freya-san Hub v5\.0[\s\S]*waid=6281200009999:\+6281200009999[\s\S]*END:VCARD/);
+    assert.deepEqual(findFormalIndonesianViolations(ownerRes.replyText), []);
+  } finally {
+    if (prevOwnerNumRow) {
+      db.prepare("UPDATE settings SET value = ? WHERE key = 'owner_number_configured'").run(prevOwnerNumRow.value);
+    } else {
+      db.prepare("DELETE FROM settings WHERE key = 'owner_number_configured'").run();
+    }
+    if (prevOwnerNameRow) {
+      db.prepare("UPDATE settings SET value = ? WHERE key = 'owner_name_configured'").run(prevOwnerNameRow.value);
+    } else {
+      db.prepare("DELETE FROM settings WHERE key = 'owner_name_configured'").run();
+    }
+  }
+
+  // 2) #stikeraudio alias works AND preserves audio > 10s (no -t audio cap!)
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'freya-long-audio-'));
+  let longAudioBuf: Buffer;
+  try {
+    const longWavPath = path.join(tmpDir, 'long12s.wav');
+    execFileSync(
+      'ffmpeg',
+      ['-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=12', '-ar', '48000', '-ac', '1', longWavPath],
+      { stdio: 'pipe' },
+    );
+    longAudioBuf = fs.readFileSync(longWavPath);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+
+  const sampleImg = await generateMediaPipelineSample('image');
+  const longBundle = await convertStickerAudioBundle({
+    visualBuffer: sampleImg,
+    visualKind: 'image',
+    audioBuffer: longAudioBuf,
+    userPhone: TEST_PHONES[1],
+    lang: 'id',
+  });
+  assert.equal(longBundle.ok, true, longBundle.caption);
+  assert.ok(longBundle.soundStickerBundle);
+  assert.ok(
+    longBundle.soundStickerBundle!.audioSeconds >= 11,
+    `Expected unlimited audio >= 11s, got ${longBundle.soundStickerBundle!.audioSeconds}s`,
+  );
+
+  clearRateLimitBucketsForTests();
+  const aliasStep1 = await whatsappEngine.processIncomingMessage({
+    chatId: `${TEST_PHONES[2]}@s.whatsapp.net`,
+    chatScope: 'private',
+    senderPhone: TEST_PHONES[2],
+    senderName: 'StikeraudioAliasTester',
+    text: '#stikeraudio',
+    quotedMediaKind: 'image',
+    quotedMediaBuffer: sampleImg,
+    hasMedia: true,
+    hasReply: true,
+    source: 'simulator',
+  });
+  assert.equal(aliasStep1.status, 'pending');
+
+  clearRateLimitBucketsForTests();
+  const aliasStep2 = await whatsappEngine.processIncomingMessage({
+    chatId: `${TEST_PHONES[2]}@s.whatsapp.net`,
+    chatScope: 'private',
+    senderPhone: TEST_PHONES[2],
+    senderName: 'StikeraudioAliasTester',
+    text: '#stikeraudio',
+    quotedMediaKind: 'audio',
+    quotedMediaBuffer: longAudioBuf,
+    hasMedia: true,
+    hasReply: true,
+    source: 'simulator',
+  });
+  assert.equal(aliasStep2.status, 'ok', aliasStep2.replyText);
+  assert.equal(aliasStep2.mediaPreview?.kind, 'sound_sticker');
+
+  // 3) #menu encodes all 12 Wibusoft categories + 48GROUP GAMES in Baileys v7 single_select InteractiveMessage
+  const mainBuilt = buildMenuPayload('main', {
+    prefix: '#',
+    lang: 'id',
+    isOwner: false,
+    isGroupAdmin: false,
+    chatScope: 'private',
+    senderName: 'Tester',
+  });
+  assert.equal(mainBuilt.menu.title, 'FREYA-SAN HUB v5.0 NAVIGATION');
+  assert.equal(mainBuilt.menu.buttonText, 'Pilih Kategori Menu');
+  assert.equal(mainBuilt.menu.footer, 'Freya-san bot by Pak Ujan');
+
+  const allTitles = mainBuilt.menu.sections.flatMap((s) => s.rows.map((r) => r.title)).join(' | ');
+  for (const cat of ['AI', 'DOWNLOAD', 'GAME', 'GENERAL', 'GROUP', 'INFO', 'OWNER', 'RANDOM', 'SEARCH', 'STICKER', 'TEXTMAKER', 'TOOLS', '48GROUP GAMES']) {
+    assert.ok(allTitles.includes(cat), `Missing category ${cat} in main interactive menu`);
+  }
+
+  const protoMsg = buildBaileysInteractiveListProto({
+    jid: `${TEST_PHONES[0]}@s.whatsapp.net`,
+    userJid: '6281200009999@s.whatsapp.net',
+    menu: mainBuilt.menu,
+    bodyText: mainBuilt.headerText,
+  });
+  const nativeBtn =
+    protoMsg.message?.viewOnceMessage?.message?.interactiveMessage?.nativeFlowMessage?.buttons?.[0];
+  assert.equal(nativeBtn?.name, 'single_select');
+  const parsedParams = JSON.parse(nativeBtn?.buttonParamsJson || '{}');
+  assert.equal(parsedParams.title, 'Pilih Kategori Menu');
+  assert.ok(Array.isArray(parsedParams.sections) && parsedParams.sections.length >= 2);
+});
+
 
 

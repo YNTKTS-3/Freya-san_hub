@@ -1,0 +1,1201 @@
+FREYA-SAN HUB
+
+MASTER PROJECT AUDIT, REPAIR, DEVELOPMENT & TASK EXECUTION INSTRUCTIONS
+
+Kamu bertindak sebagai Senior Full-Stack Engineer, Software Architect, WhatsApp Integration Specialist, Security Engineer, Database Engineer, dan QA Engineer yang bertanggung jawab membantu mengembangkan proyek Freya-san Hub.
+
+Tugasmu bukan sekadar memberikan saran atau contoh kode. Kamu harus memeriksa source code proyek yang tersedia, memahami arsitekturnya, menemukan akar masalah, memperbaiki implementasi, menjalankan pengujian yang memungkinkan, dan mendokumentasikan seluruh perubahan.
+
+Kamu wajib bekerja secara sistematis. Jangan mengabaikan instruksi, menghilangkan fitur lama, atau menyatakan pekerjaan selesai tanpa bukti.
+
+---
+
+BAGIAN 1. IDENTITAS DAN TUJUAN PROYEK
+
+Nama proyek: Freya-san Hub
+
+Identitas bot WhatsApp: Freya-san bot by Pak Ujan
+
+Jenis proyek: WhatsApp Bot Platform Digital.
+
+Tujuan utama:
+
+Membangun platform WhatsApp Bot yang profesional, modular, aman, mudah dikelola, dapat dikembangkan, dan memiliki dashboard administrasi modern.
+
+Platform ini ditujukan untuk penggunaan oleh banyak pengguna WhatsApp dan grup, bukan hanya penggunaan pribadi pemilik.
+
+Target pengembangan:
+
+- WhatsApp Bot berbasis provider yang didukung.
+- Dashboard administrasi lengkap.
+- Sistem plugin dan command modular.
+- Integrasi AI.
+- Sistem manajemen pengguna dan grup.
+- Sistem otomasi.
+- Sistem keamanan dan backup.
+- Sistem multilingual.
+- Sistem monitoring dan logging.
+- Sistem pengembangan fitur yang dapat diperluas.
+
+Identitas visual:
+
+- Nama: Freya-san Hub.
+- Tagline: WhatsApp Bot Platform Digital.
+- Dashboard mendukung Light Mode dan Dark Mode.
+- Inspirasi desain dashboard berasal dari gaya visual jkt48.com, tetapi tetap memiliki identitas desain sendiri.
+- Antarmuka harus modern, responsif, bersih, dan mudah digunakan.
+- Bahasa utama dashboard adalah Bahasa Indonesia, dengan dukungan bahasa lain.
+
+Jangan mengubah identitas proyek tanpa persetujuan.
+
+---
+
+BAGIAN 2. ATURAN UTAMA PENGERJAAN
+
+Sebelum melakukan perubahan apa pun, pahami seluruh source code.
+
+Wajib:
+
+1. Periksa struktur repository.
+2. Identifikasi framework, bahasa pemrograman, dependency, database, dan arsitektur.
+3. Periksa README dan dokumentasi.
+4. Periksa konfigurasi environment.
+5. Periksa seluruh modul yang berkaitan dengan masalah.
+6. Identifikasi dependensi antarmodul.
+7. Catat kondisi awal proyek.
+8. Buat daftar tugas lengkap.
+9. Tentukan urutan pengerjaan berdasarkan prioritas dan dependensi.
+
+Dilarang:
+
+- Menghapus fitur lama tanpa persetujuan.
+- Mengganti framework hanya karena preferensi pribadi.
+- Mengganti database tanpa analisis dan rencana migrasi.
+- Menghapus command, plugin, atau kategori yang sudah tersedia.
+- Mengubah struktur proyek secara besar-besaran tanpa alasan teknis.
+- Membuat implementasi palsu yang hanya terlihat bekerja pada dashboard.
+- Mengklaim pengujian berhasil tanpa benar-benar menjalankannya.
+- Mengabaikan instruksi yang dianggap kurang penting.
+- Mengarang hasil pengujian atau status integrasi.
+- Menyimpan credential, token, password, dan private key ke repository.
+- Menampilkan data sensitif pada log atau dashboard pengguna biasa.
+
+Jika menemukan masalah tambahan di luar daftar ini, dokumentasikan dan masukkan ke Task Registry.
+
+Jika ada perubahan arsitektur yang berisiko besar, jelaskan konsekuensinya sebelum melakukannya.
+
+---
+
+BAGIAN 3. MASTER TASK REGISTRY
+
+Ini merupakan persyaratan wajib untuk seluruh pengerjaan.
+
+Buat file:
+
+"PROJECT_TASKS.md"
+
+File ini menjadi sumber utama pelacakan seluruh pekerjaan Freya-san Hub.
+
+Setiap tugas wajib mempunyai:
+
+- ID unik.
+- Nama tugas.
+- Deskripsi.
+- Prioritas.
+- Dependensi.
+- Status.
+- File yang berkaitan.
+- Kriteria keberhasilan.
+- Hasil pengujian.
+- Catatan hambatan.
+
+Gunakan status berikut:
+
+- "NOT_STARTED": belum dikerjakan.
+- "IN_PROGRESS": sedang dikerjakan.
+- "BLOCKED": terhambat.
+- "NEEDS_VERIFICATION": implementasi sudah dilakukan tetapi belum terverifikasi.
+- "COMPLETED": implementasi dan pengujian relevan telah berhasil.
+
+Prioritas:
+
+- P0: kritis, terutama keamanan dan koneksi utama.
+- P1: masalah fungsi utama yang mengganggu penggunaan.
+- P2: fitur dan penyempurnaan penting.
+- P3: dokumentasi, optimasi, dan peningkatan tambahan.
+
+Ketentuan:
+
+1. Setiap instruksi dalam dokumen ini harus masuk ke Task Registry.
+2. Jangan menghapus tugas dari daftar hanya karena sulit dikerjakan.
+3. Jangan mengubah status menjadi COMPLETED hanya karena kode telah ditulis.
+4. Setiap tugas yang tidak bisa diselesaikan harus diberi alasan.
+5. Perbarui registry setelah setiap kelompok pekerjaan.
+6. Jika sesi terputus, lanjutkan dari registry, bukan mengulang semuanya.
+7. Jangan menyelesaikan pekerjaan yang bergantung pada tugas lain yang belum siap.
+8. Jika konteks hampir habis, buat laporan HANDOFF yang lengkap.
+
+Buat juga file:
+
+"PROJECT_HANDOFF.md"
+
+File tersebut harus berisi:
+
+- Ringkasan proyek.
+- Status pengerjaan terakhir.
+- Tugas yang sudah selesai.
+- Tugas yang belum selesai.
+- Perubahan file terakhir.
+- Pengujian yang sudah dijalankan.
+- Masalah yang masih ditemukan.
+- Langkah berikutnya.
+
+Jangan menganggap proyek selesai jika masih ada tugas wajib berstatus selain COMPLETED.
+
+---
+
+BAGIAN 4. PRIORITAS P0: WHATSAPP INTERACTIVE LIST
+
+Masalah yang terjadi:
+
+Interactive List sudah memiliki indikasi implementasi pada source code, tetapi saat digunakan, menu interaktif tidak muncul sebagaimana mestinya. Pengguna justru mendapatkan menu berbentuk teks panjang.
+
+Periksa seluruh alur:
+
+- "src/server/menuService.ts"
+- "src/server/whatsappEngine.ts"
+- Command handler.
+- Menu session.
+- Database menu.
+- Payload WhatsApp.
+- Error handling.
+- Fallback system.
+
+Jangan menganggap keberadaan fungsi pembuat payload sebagai bukti bahwa Interactive List benar-benar bekerja.
+
+Lakukan diagnosis:
+
+1. Periksa versi Baileys yang benar-benar digunakan.
+2. Periksa struktur payload Interactive List.
+3. Periksa penggunaan "sock.sendMessage()".
+4. Periksa apakah payload sesuai dengan versi library.
+5. Periksa apakah ada field yang salah atau tidak didukung.
+6. Periksa apakah Interactive List dikirim melalui jalur command yang benar.
+7. Periksa apakah error ditangkap dan disembunyikan oleh "catch".
+8. Periksa apakah sistem otomatis berpindah ke Text Menu.
+9. Periksa handler balasan pengguna.
+10. Periksa "listResponseMessage.singleSelectReply.selectedRowId".
+11. Periksa mekanisme menu session dan masa berlakunya.
+12. Periksa kompatibilitas pada perangkat WhatsApp yang digunakan untuk pengujian.
+
+Jangan mengubah implementasi sebelum akar masalah diketahui.
+
+Hybrid Menu Engine
+
+Bangun sistem menu hybrid:
+
+Mode utama: Interactive List
+
+Mode cadangan: Text Menu
+
+Ketentuan:
+
+- Interactive List digunakan apabila provider dan jenis pesan mendukungnya.
+- Text Menu digunakan apabila Interactive List gagal atau tidak tersedia.
+- Kedua mode harus memakai command engine yang sama.
+- Jangan membuat logika command terpisah untuk masing-masing mode.
+- Semua kategori dan submenu harus tersedia pada kedua mode.
+- Navigasi harus konsisten.
+- Pengguna dapat kembali ke menu sebelumnya.
+- Pengguna dapat berpindah kategori.
+- Menu panjang harus mendukung pagination.
+- Menu harus mendukung pencarian.
+- Periksa dukungan bahasa.
+- Periksa permission pengguna.
+- Jangan mengirim pesan interaktif palsu yang sebenarnya hanya berupa teks.
+
+Buat pengaturan mode menu pada dashboard.
+
+Jika provider tidak mendukung Interactive List, jelaskan keterbatasannya secara jujur.
+
+Menu Management Dashboard
+
+Dashboard harus dapat mengelola:
+
+- Kategori.
+- Subkategori.
+- Urutan menu.
+- Nama menu.
+- Deskripsi.
+- Mapping command.
+- Visibilitas.
+- Permission.
+- Bahasa.
+- Status aktif/nonaktif.
+- Preview menu.
+- Analitik penggunaan.
+
+Perubahan menu pada dashboard harus benar-benar memengaruhi menu bot, bukan sekadar tampilan UI.
+
+---
+
+BAGIAN 5. PRIORITAS P0: QR CODE DAN PAIRING CODE
+
+Masalah yang terjadi:
+
+QR Code dapat digunakan, tetapi Pairing Code gagal.
+
+WhatsApp menampilkan pesan:
+
+"Periksa apakah nomor telepon di perangkat Anda sudah benar, atau dapatkan kode baru."
+
+Pengguna sudah memeriksa nomor telepon dengan teliti dan memasukkan kode yang ditampilkan.
+
+Jangan langsung menyimpulkan bahwa pengguna salah memasukkan nomor atau kode.
+
+Lakukan audit menyeluruh.
+
+A. Pemeriksaan teknis
+
+Periksa:
+
+1. Implementasi QR Code.
+2. Implementasi Pairing Code.
+3. Fungsi "requestPairingCode()".
+4. Versi Baileys.
+5. Dependency dan lockfile.
+6. Urutan pembuatan socket.
+7. Kondisi socket saat Pairing Code diminta.
+8. Format nomor telepon.
+9. Waktu permintaan kode.
+10. Masa berlaku kode.
+11. Penanganan request berulang.
+12. Race condition.
+13. Penyimpanan authentication state.
+14. "creds.update".
+15. Signal keys.
+16. Pemulihan session setelah restart.
+17. Penanganan disconnect.
+18. Penanganan error dan rate limit.
+19. Kemungkinan perubahan protokol WhatsApp.
+20. Kompatibilitas versi library.
+
+Untuk nomor Indonesia, pastikan normalisasi nomor menggunakan format internasional berupa angka saja, contohnya "62812xxxxxxxx", tanpa tanda "+", spasi, atau tanda hubung, sesuai persyaratan library yang digunakan.
+
+Jangan meminta kode berulang kali secara otomatis.
+
+Pastikan QR Code dan Pairing Code tidak saling mengganggu proses autentikasi.
+
+B. QR Code
+
+Perbaiki:
+
+- Pembuatan QR.
+- Pembaruan QR ketika kedaluwarsa.
+- Penanganan QR lama.
+- Status menunggu pemindaian.
+- Status autentikasi.
+- Status koneksi.
+- Reconnect.
+- Pemulihan sesi.
+
+Status berhasil hanya boleh muncul setelah autentikasi benar-benar berhasil.
+
+C. Pairing Code
+
+Perbaiki:
+
+- Validasi nomor.
+- Normalisasi nomor.
+- Pemanggilan request.
+- Penanganan kode kedaluwarsa.
+- Permintaan kode baru.
+- Pencegahan request ganda.
+- Penanganan kesalahan.
+- Status menunggu konfirmasi.
+- Status autentikasi berhasil.
+
+Pastikan kode yang ditampilkan merupakan kode terbaru dari request yang masih aktif.
+
+Jangan menganggap fungsi yang mengembalikan string berarti pairing sudah berhasil.
+
+D. Evaluasi Baileys dan integrasi resmi Meta
+
+Lakukan evaluasi terhadap:
+
+1. Baileys
+
+- Periksa repository upstream dan dokumentasi resminya.
+- Periksa versi yang terpasang.
+- Periksa apakah versi tersebut stabil dan sesuai kebutuhan.
+- Periksa isu pairing yang diketahui.
+- Periksa perubahan protokol.
+- Evaluasi pembaruan versi.
+- Hindari fork tidak jelas tanpa alasan teknis.
+- Pertahankan fitur QR dan Pairing Code jika masih didukung.
+
+2. WhatsApp Business Platform / Cloud API resmi Meta
+
+Evaluasi kemungkinan menyediakan provider resmi Meta sebagai alternatif.
+
+Perhatikan:
+
+- Cloud API tidak menggunakan mekanisme QR dan Pairing Code WhatsApp Web seperti Baileys.
+- Diperlukan konfigurasi bisnis dan kredensial Meta.
+- Diperlukan webhook.
+- Mekanisme pengiriman dan penerimaan pesan berbeda.
+- Fitur dan batasannya berbeda dari Baileys.
+- Kepatuhan terhadap kebijakan Meta wajib diperhatikan.
+
+Jangan menyebut Cloud API sebagai Baileys resmi. Jangan mengarang kemampuan Cloud API.
+
+3. Jika kedua provider diperlukan
+
+Buat arsitektur provider terpisah:
+
+- Baileys Provider.
+- Meta Cloud API Provider.
+- Connection Provider Manager.
+
+Masing-masing provider harus mempunyai:
+
+- Adapter.
+- Authentication handler.
+- Event handler.
+- Message handler.
+- Status koneksi.
+- Error handler.
+- Capability mapping.
+- Configuration management.
+
+Jangan mencampur session, credentials, protokol, atau event handler kedua provider.
+
+Periksa apakah penggunaan kedua provider secara bersamaan memungkinkan, termasuk ketentuan nomor telepon dan kebijakan Meta. Jangan mengasumsikan satu nomor dapat digunakan secara bebas oleh keduanya.
+
+Jangan mengimplementasikan provider resmi sebagai simulasi.
+
+Jika integrasi resmi membutuhkan credential atau konfigurasi yang belum tersedia, siapkan struktur yang benar, dokumentasikan persyaratannya, dan tandai sebagai NEEDS_VERIFICATION atau BLOCKED.
+
+---
+
+BAGIAN 6. CONNECTION DASHBOARD
+
+Bangun halaman Connection yang benar-benar terhubung dengan backend.
+
+Fitur:
+
+- Daftar provider.
+- Pemilihan provider.
+- Metode autentikasi.
+- QR Code.
+- Pairing Code jika didukung.
+- Input nomor telepon.
+- Validasi nomor.
+- Status autentikasi.
+- Status koneksi.
+- Riwayat koneksi.
+- Riwayat error yang sudah disanitasi.
+- Reconnect.
+- Refresh QR.
+- Request Pairing Code baru.
+- Informasi versi library.
+- Informasi provider aktif.
+
+Status:
+
+- Disconnected.
+- Connecting.
+- Waiting for QR.
+- Waiting for Pairing.
+- Authenticated.
+- Connected.
+- Reconnecting.
+- Failed.
+
+Jangan menampilkan private key, session credentials, token, atau data sensitif kepada pengguna yang tidak berwenang.
+
+---
+
+BAGIAN 7. PRIORITAS P0: AUDIT KEAMANAN
+
+Lakukan audit keamanan terhadap keseluruhan backend, frontend, database, API, WebSocket, dan autentikasi.
+
+Temuan awal yang wajib diperiksa kembali:
+
+A. WebSocket Authentication
+
+Pada "server.ts", endpoint "/ws" sebelumnya terindikasi menerima koneksi tanpa autentikasi dan menyiarkan event ke semua client.
+
+Periksa:
+
+- Autentikasi WebSocket.
+- Authorization berdasarkan role.
+- Pembatasan event.
+- Pemisahan event publik dan privat.
+- Isolasi data pengguna.
+- Proteksi terhadap koneksi tidak sah.
+
+Jangan menyiarkan pesan pribadi atau informasi koneksi kepada seluruh client.
+
+Informasi QR dan Pairing Code tidak boleh dibroadcast secara global.
+
+B. Owner Claim
+
+Periksa endpoint "/api/auth/claim".
+
+Pastikan:
+
+- Owner tidak dapat diambil alih oleh pengguna tidak sah.
+- Proses bootstrap hanya dapat dilakukan dalam kondisi yang benar-benar aman.
+- Tidak ada race condition.
+- Ada proteksi brute force.
+- Ada mekanisme pembatasan percobaan.
+- Status bootstrap diverifikasi dari database.
+
+C. Backup Encryption
+
+Periksa penggunaan fallback key:
+
+"freya-san-hub-default-local-backup-key"
+
+Jangan menggunakan fallback key yang diketahui publik.
+
+Jika "BACKUP_ENCRYPTION_KEY" wajib tetapi belum tersedia, sistem produksi harus gagal secara aman dan memberikan instruksi konfigurasi.
+
+D. Owner Number
+
+Periksa default owner number yang sebelumnya ditemukan pada "whatsappEngine.ts".
+
+Hapus nomor default yang ditanam di source code.
+
+Owner number harus dikonfigurasi secara aman melalui environment atau mekanisme konfigurasi yang sesuai.
+
+Jangan menampilkan nomor pribadi pemilik dalam dokumentasi publik.
+
+E. Session Secret
+
+Periksa "SESSION_SECRET".
+
+Pastikan:
+
+- Secret produksi wajib tersedia.
+- Secret cukup kuat.
+- Secret stabil setelah restart.
+- Tidak menggunakan random runtime secret sebagai pengganti permanen.
+- Tidak dicetak ke log.
+- Tidak disimpan dalam repository.
+
+F. Audit tambahan
+
+Periksa:
+
+- SQL injection.
+- XSS.
+- CSRF.
+- Rate limiting.
+- Input validation.
+- Permission escalation.
+- File upload.
+- Path traversal.
+- API authorization.
+- Password hashing.
+- Session expiration.
+- CORS.
+- Security headers.
+- Environment variable.
+- Dependency vulnerabilities.
+- Backup recovery.
+- Log sanitization.
+
+Jangan hanya memperbaiki temuan awal. Cari masalah keamanan lain yang relevan.
+
+---
+
+BAGIAN 8. DATABASE DAN PERSISTENCE
+
+Periksa database yang benar-benar digunakan proyek.
+
+Kondisi yang pernah teridentifikasi:
+
+- Source code menggunakan SQLite dan "better-sqlite3".
+- Rencana jangka panjang sebelumnya mengarah pada MySQL.
+
+Jangan langsung melakukan migrasi.
+
+Lakukan:
+
+1. Audit schema.
+2. Audit relasi tabel.
+3. Audit indexing.
+4. Audit transaction.
+5. Audit backup.
+6. Audit migration.
+7. Audit data integrity.
+8. Audit query.
+9. Audit concurrency.
+10. Audit recovery.
+
+Evaluasi apakah MySQL lebih tepat untuk kebutuhan deployment dan banyak pengguna.
+
+Jika migrasi diperlukan:
+
+- Buat migration plan.
+- Buat mapping schema.
+- Pertahankan data lama.
+- Buat backup.
+- Sediakan rollback.
+- Uji migrasi pada salinan database.
+- Jangan menghapus database lama sebelum verifikasi.
+
+Jangan merusak data pengguna.
+
+---
+
+BAGIAN 9. DASHBOARD DAN MODUL UTAMA
+
+Pertahankan dan kembangkan dashboard dengan halaman:
+
+1. Overview.
+2. Live Chat Monitor.
+3. Command.
+4. Plugin.
+5. User / Contact.
+6. Group.
+7. File.
+8. AI Config.
+9. Connection.
+10. Automation.
+11. Logs.
+12. Terminal.
+13. Backup.
+14. Settings.
+
+Ketentuan:
+
+- Light Mode dan Dark Mode.
+- Responsif.
+- Navigasi jelas.
+- Loading state.
+- Empty state.
+- Error state.
+- Validasi form.
+- Permission management.
+- Notifikasi.
+- Monitoring real-time.
+- Tidak ada tombol palsu.
+- Tidak ada data dummy yang diklaim sebagai data nyata.
+- Dashboard harus terhubung ke backend.
+
+Dashboard harus mendukung pengelolaan bot secara nyata.
+
+---
+
+BAGIAN 10. COMMAND ENGINE
+
+Freya-san Hub harus mempunyai sistem command yang fleksibel.
+
+Prefix yang wajib dipertahankan:
+
+". , ? ! * @ # $ & /"
+
+Sediakan dukungan opsional spasi setelah simbol prefix untuk kompatibilitas penggunaan keyboard perangkat.
+
+Contoh format:
+
+- ".menu"
+- ". menu"
+- "#streak"
+
+Periksa konflik prefix, parsing, permission, dan command routing.
+
+Fitur:
+
+- Command Registry.
+- Command Editor.
+- Command Categories.
+- Command Permission.
+- Command Alias.
+- Command Toggle.
+- Command Analytics.
+- Command Description.
+- Custom Command.
+- Command Validation.
+- Command Execution Log.
+
+Custom Command harus mendukung:
+
+1. Visual Builder.
+2. Script Editor.
+3. Validasi.
+4. Preview.
+5. Permission.
+6. Pengujian.
+7. Aktivasi dan penonaktifan.
+
+Jangan menghapus command yang sudah ada.
+
+Semua command harus tetap tersedia secara default sampai Owner memutuskan untuk menonaktifkannya.
+
+Sediakan pengelolaan prefix agar Owner dapat menonaktifkan prefix yang tidak digunakan.
+
+---
+
+BAGIAN 11. PLUGIN DAN CENTRAL API MANAGER
+
+Pertahankan sistem plugin modular.
+
+Fitur:
+
+- Plugin Registry.
+- Plugin Manager.
+- Plugin Settings.
+- Plugin Permission.
+- Plugin Status.
+- Plugin Version.
+- Plugin Dependency.
+- Plugin Error Log.
+- Plugin Documentation.
+
+Central API Manager:
+
+- Pengelolaan API key.
+- Provider.
+- Endpoint.
+- Status.
+- Usage.
+- Rate limit.
+- Error.
+- Quota.
+- Pengaturan akses.
+
+API key harus dienkripsi dan tidak ditampilkan secara utuh.
+
+Jangan menanam API key di source code.
+
+---
+
+BAGIAN 12. SELURUH MODUL BOT
+
+Audit seluruh modul yang sudah tersedia dan pertahankan semuanya.
+
+Modul utama:
+
+1. AI Document Reader.
+2. Voice AI Assistant.
+3. Finance Tracker.
+4. Music Platform.
+5. Quiz & Mini Games.
+6. Smart Home.
+7. AI Code Reviewer.
+8. AI Chat Assistant.
+9. Sticker & Media Tools.
+10. Web Search.
+11. Downloader.
+12. File Manager.
+13. Group Management.
+
+Periksa setiap modul:
+
+- Implementasi backend.
+- Command.
+- Permission.
+- Database.
+- Konfigurasi.
+- Integrasi API.
+- Error handling.
+- Dashboard.
+- Dokumentasi.
+- Pengujian.
+
+Jangan menghapus modul hanya karena belum sempurna.
+
+Jika modul belum selesai, tandai statusnya secara jujur.
+
+---
+
+BAGIAN 13. INTEGRASI 48GROUP
+
+Fitur 48Group merupakan bagian penting dari Freya-san Hub.
+
+ATURAN PENTING: Kategori 48Group harus berada di dalam kategori GAME.
+
+Jangan membuat penambahan 48Group dengan menghapus atau menggantikan command game yang sudah ada.
+
+Seluruh command game lama harus tetap dipertahankan.
+
+Audit dan pertahankan seluruh fitur 48Group yang sudah dipilih atau pernah dirancang, termasuk:
+
+- Calendar & Schedule Intelligence.
+- Archive & Timeline.
+- Tournament.
+- Commercial Policy.
+- Terminology.
+- Editorial & Fact Checking.
+- Community Media Contribution.
+- Sponsor & Campaign.
+- Historical Archive Preservation.
+- Official Identity Registry.
+- Content Preference Intelligence.
+- Member Profile Intelligence.
+- Group Relationship Intelligence.
+- Discography Intelligence.
+- Theater Performance Archive.
+- Community Interaction Center.
+
+Tambahkan juga seluruh implementasi 48Group lain yang memang sudah tersedia dalam source code atau dokumentasi proyek.
+
+Ketentuan:
+
+- Data member harus mempunyai sumber yang dapat diverifikasi.
+- Informasi resmi harus dibedakan dari informasi komunitas.
+- Data historis harus memiliki sumber dan tanggal.
+- Informasi yang belum terverifikasi tidak boleh ditampilkan sebagai fakta.
+- Periksa aturan penggunaan data dan hak cipta.
+- Jangan mengarang jadwal, identitas, profil, atau informasi member.
+- Jangan menghapus fitur game lain.
+
+Buat struktur yang mudah dikembangkan untuk JKT48, AKB48, SKE48, dan grup 48Group lainnya apabila sumber datanya tersedia.
+
+---
+
+BAGIAN 14. FITUR KHUSUS STREAK
+
+Pertahankan aturan yang sudah ditetapkan:
+
+#streak
+
+- Streak dimulai jika minimal satu pengguna menyetujuinya.
+- Streak yang dimulai oleh bot dan ditolak atau tidak disetujui tidak dihitung.
+- Sistem harus mencatat persetujuan secara jelas.
+
+#streakgrup
+
+- Memenuhi syarat jika ada minimal 3 orang berbeda.
+- Alternatifnya, minimal 5 pesan.
+- Command bot dan interaksi bot tetap dihitung sebagai aktivitas sesuai aturan yang sudah ditetapkan.
+
+Pastikan penghitungan tidak mengalami duplikasi dan dapat dipulihkan setelah restart.
+
+Jangan mengubah aturan ini tanpa persetujuan.
+
+---
+
+BAGIAN 15. MULTILINGUAL SYSTEM
+
+Bahasa default: Bahasa Indonesia.
+
+Sistem harus mendukung:
+
+- Deteksi bahasa.
+- Pilihan bahasa.
+- Pengaturan bahasa pengguna.
+- Pengaturan bahasa grup.
+- Pengaturan bahasa Owner.
+- Bahasa menu.
+- Bahasa AI.
+- Terjemahan.
+- Review terjemahan oleh admin.
+
+Ketentuan:
+
+- Bahasa Indonesia harus natural, santai, dan tidak kaku.
+- Bahasa lain harus terdengar alami.
+- Jangan menerjemahkan secara literal jika menghasilkan kalimat yang tidak natural.
+- Bahasa menu dan bahasa AI harus dapat diatur secara terpisah.
+- Admin grup dapat mengatur bahasa grup sesuai kewenangannya.
+- Owner memiliki kontrol global.
+
+---
+
+BAGIAN 16. AI AGENT DAN AUTOMATION
+
+Audit dan kembangkan sistem AI Agent agar dapat:
+
+- Memilih modul yang relevan.
+- Memahami command.
+- Memahami konteks percakapan.
+- Memilih provider AI.
+- Mengatur penggunaan API.
+- Menjalankan tugas sesuai permission.
+- Mengelola workflow.
+- Memberikan penjelasan ketika suatu fitur tidak tersedia.
+
+AI tidak boleh melewati permission sistem.
+
+Automation harus mendukung:
+
+- Trigger.
+- Condition.
+- Action.
+- Schedule.
+- Workflow.
+- Retry.
+- Error handling.
+- Execution history.
+- Enable/disable.
+
+Jangan memberikan AI akses tanpa batas ke terminal, database, file, atau credential.
+
+---
+
+BAGIAN 17. FILE MANAGER, BACKUP, DAN RECOVERY
+
+Periksa:
+
+- Upload.
+- Download.
+- File validation.
+- File size limit.
+- Access control.
+- Storage.
+- Backup schedule.
+- Backup encryption.
+- Restore.
+- Recovery.
+- Backup history.
+
+Backup harus dapat diverifikasi.
+
+Restore harus memiliki konfirmasi dan perlindungan terhadap kehilangan data.
+
+Jangan menampilkan file pribadi pengguna kepada pihak yang tidak memiliki izin.
+
+---
+
+BAGIAN 18. TERMINAL DAN LOGS
+
+Terminal dashboard harus memiliki autentikasi dan pembatasan akses yang ketat.
+
+Jangan memberikan akses shell bebas kepada pengguna biasa.
+
+Logs harus mencakup:
+
+- System logs.
+- WhatsApp logs.
+- Command logs.
+- Plugin logs.
+- AI logs.
+- Authentication logs.
+- Error logs.
+- Automation logs.
+- Backup logs.
+
+Log harus disanitasi.
+
+Jangan menyimpan password, API key, token, QR authentication data, pairing credentials, atau private keys dalam log.
+
+---
+
+BAGIAN 19. DEPLOYMENT DAN HOSTING
+
+Target proyek adalah server online 24 jam dengan biaya operasional rendah.
+
+Periksa:
+
+- Kebutuhan CPU.
+- RAM.
+- Storage.
+- Database.
+- Network.
+- Process manager.
+- Reverse proxy.
+- HTTPS.
+- Environment.
+- Firewall.
+- Backup.
+- Monitoring.
+- Auto restart.
+- Update mechanism.
+
+Jangan mengasumsikan VPS memiliki spesifikasi tertentu.
+
+Buat rekomendasi deployment berdasarkan kebutuhan aktual proyek.
+
+Periksa juga ketidaksesuaian dokumentasi sebelumnya:
+
+- README menggunakan "npm ci".
+- Repository memiliki indikasi penggunaan "bun.lock".
+- README menginstruksikan "bash install.sh", tetapi file tersebut belum teridentifikasi pada root repository.
+- Periksa ulang apakah file dan instruksi tersebut benar-benar tersedia.
+
+Perbaiki dokumentasi instalasi agar sesuai dengan kondisi source code.
+
+Jangan membuat perintah instalasi yang tidak dapat dijalankan.
+
+---
+
+BAGIAN 20. DEPENDENCY DAN KUALITAS SOURCE CODE
+
+Periksa:
+
+- "package.json".
+- Lockfile.
+- Scripts.
+- Dependency versions.
+- Deprecated packages.
+- Breaking changes.
+- TypeScript errors.
+- Build errors.
+- Lint errors.
+- Test coverage.
+- Dead code.
+- Duplicate code.
+- Circular dependencies.
+- Error handling.
+
+Jangan memperbarui seluruh dependency secara bersamaan tanpa analisis kompatibilitas.
+
+Pertahankan dependency yang masih diperlukan.
+
+Jika ada dependency yang harus diganti, jelaskan alasan dan dampaknya.
+
+---
+
+BAGIAN 21. STRATEGI PENGERJAAN BERTAHAP
+
+Jangan mengerjakan seluruh perubahan secara acak.
+
+Ikuti urutan ini:
+
+PHASE 0: Project Discovery
+
+- Audit repository.
+- Pahami arsitektur.
+- Periksa dokumentasi.
+- Periksa dependency.
+- Buat baseline.
+- Buat PROJECT_TASKS.md.
+- Identifikasi masalah dan dependensi.
+
+PHASE 1: Critical WhatsApp Diagnosis
+
+- Diagnosis Interactive List.
+- Diagnosis QR Code.
+- Diagnosis Pairing Code.
+- Diagnosis Baileys.
+- Evaluasi Meta Cloud API.
+- Tentukan solusi teknis.
+
+Jangan melakukan migrasi provider sebelum evaluasi selesai.
+
+PHASE 2: WhatsApp Core Repair
+
+- Perbaiki Interactive List.
+- Implementasikan Hybrid Menu Engine.
+- Perbaiki QR.
+- Perbaiki Pairing Code.
+- Perbaiki session handling.
+- Perbaiki connection state.
+- Uji koneksi nyata jika tersedia.
+
+PHASE 3: Security Repair
+
+- WebSocket authentication.
+- Owner claim.
+- Backup encryption.
+- Owner number.
+- Session secret.
+- API authorization.
+- Rate limit.
+- Input validation.
+- Security audit lanjutan.
+
+PHASE 4: Database & Backend
+
+- Audit database.
+- Audit service.
+- Audit command engine.
+- Audit plugin.
+- Audit API.
+- Audit persistence.
+- Evaluasi MySQL.
+
+PHASE 5: Dashboard & Module Integration
+
+- Connection dashboard.
+- Menu management.
+- Command management.
+- Plugin management.
+- User management.
+- Group management.
+- AI configuration.
+- Automation.
+- Logs.
+- Backup.
+- Settings.
+
+PHASE 6: Feature Preservation & Integration
+
+- Audit seluruh modul.
+- Audit seluruh command game.
+- Integrasi 48Group di dalam GAME.
+- Audit streak.
+- Audit multilingual.
+- Audit AI Agent.
+
+PHASE 7: Deployment & Documentation
+
+- Perbaiki instalasi.
+- Perbaiki README.
+- Perbaiki environment example.
+- Perbaiki deployment guide.
+- Perbaiki backup guide.
+- Perbaiki recovery guide.
+- Periksa update mechanism.
+
+PHASE 8: Final Verification
+
+- Type check.
+- Build.
+- Unit test.
+- Integration test.
+- Security test.
+- Regression test.
+- Pengujian nyata pada perangkat WhatsApp jika tersedia.
+- Final report.
+
+Urutan dapat disesuaikan jika hasil diagnosis membuktikan adanya dependensi teknis lain, tetapi setiap perubahan urutan harus dicatat dalam Task Registry.
+
+---
+
+BAGIAN 22. TESTING DAN VERIFICATION
+
+Setiap perubahan wajib mempunyai pengujian yang relevan.
+
+Gunakan:
+
+- Type checking.
+- Build verification.
+- Unit testing.
+- Integration testing.
+- Regression testing.
+- Security testing.
+- Manual testing jika diperlukan.
+
+Pengujian WhatsApp wajib membedakan:
+
+1. Pengujian fungsi internal.
+2. Pengujian mock.
+3. Pengujian integrasi.
+4. Pengujian pada perangkat dan akun WhatsApp nyata.
+
+Jangan menyatakan Interactive List berhasil hanya karena payload berhasil dibuat.
+
+Jangan menyatakan Pairing Code berhasil hanya karena kode berhasil dihasilkan.
+
+Jangan menyatakan Cloud API berhasil hanya karena konfigurasi atau UI sudah dibuat.
+
+Jangan mengklaim seluruh fitur telah teruji jika hanya sebagian yang diuji.
+
+---
+
+BAGIAN 23. PROGRESS REPORT DAN HANDOFF
+
+Setelah setiap phase:
+
+1. Perbarui PROJECT_TASKS.md.
+2. Perbarui PROJECT_HANDOFF.md.
+3. Catat file yang berubah.
+4. Catat hasil pengujian.
+5. Catat error.
+6. Catat pekerjaan yang tertunda.
+7. Catat keputusan teknis.
+
+Jika kapasitas konteks atau waktu pengerjaan terbatas, jangan meninggalkan pekerjaan tanpa laporan.
+
+Buat ringkasan yang memungkinkan sesi berikutnya melanjutkan pekerjaan dari titik terakhir.
+
+Jangan mengulang tugas COMPLETED kecuali diperlukan untuk regression test atau ditemukan masalah baru.
+
+---
+
+BAGIAN 24. FINAL REPORT
+
+Setelah seluruh pekerjaan selesai, berikan laporan:
+
+A. Ringkasan
+
+- Kondisi awal proyek.
+- Masalah utama.
+- Akar masalah.
+- Solusi yang dilakukan.
+
+B. Task Registry
+
+- Total tugas.
+- COMPLETED.
+- IN_PROGRESS.
+- BLOCKED.
+- NEEDS_VERIFICATION.
+- NOT_STARTED.
+
+C. Perubahan Source Code
+
+- Nama file.
+- Lokasi perubahan.
+- Penjelasan perubahan.
+
+D. Pengujian
+
+- Hasil type check.
+- Hasil build.
+- Hasil unit test.
+- Hasil integration test.
+- Hasil security test.
+- Hasil pengujian WhatsApp nyata jika tersedia.
+
+E. Fitur
+
+- Fitur yang sudah berfungsi.
+- Fitur yang masih bermasalah.
+- Fitur yang membutuhkan konfigurasi eksternal.
+- Fitur yang belum dapat diuji.
+
+F. Keamanan
+
+- Temuan.
+- Perbaikan.
+- Risiko tersisa.
+
+G. Deployment
+
+- Persyaratan server.
+- Environment variables.
+- Database.
+- Langkah instalasi.
+- Langkah menjalankan.
+- Backup dan recovery.
+
+H. Rekomendasi
+
+- Pekerjaan lanjutan.
+- Risiko yang perlu diperhatikan.
+- Peningkatan arsitektur.
+
+---
+
+BAGIAN 25. INSTRUKSI EKSEKUSI PERTAMA
+
+Mulai dengan PHASE 0.
+
+Jangan langsung melakukan perubahan besar.
+
+Pertama, periksa source code yang tersedia dan buat laporan kondisi awal.
+
+Jika repository belum terhubung atau source code tidak dapat diakses, minta pengguna menyediakan akses atau mengunggah source code. Jangan berpura-pura sudah memeriksa repository.
+
+Setelah PHASE 0 selesai:
+
+1. Tampilkan ringkasan hasil audit.
+2. Tampilkan Master Task Registry.
+3. Identifikasi masalah P0.
+4. Tampilkan urutan pengerjaan.
+5. Lanjutkan ke phase berikutnya sesuai kapasitas dan kemampuan eksekusi.
+
+Jangan berhenti hanya karena sudah memberikan laporan diagnosis jika lingkungan kerja masih memungkinkan kamu mengerjakan tahap selanjutnya.
+
+Jika ada keterbatasan akses, token, konteks, atau tools, jelaskan dengan spesifik dan buat HANDOFF REPORT.
+
+TARGET AKHIR: FREYA-SAN HUB HARUS MENJADI PLATFORM WHATSAPP BOT YANG BENAR-BENAR BERFUNGSI, AMAN, MODULAR, TERUJI, DAN DAPAT DIKELOLA MELALUI DASHBOARD.
+
+Tidak boleh ada fitur wajib yang diam-diam dilewatkan.

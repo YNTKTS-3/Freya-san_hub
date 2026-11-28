@@ -959,6 +959,151 @@ export function runMigrations(): void {
   ensureColumn('bot_sessions', 'connection_method', `TEXT NOT NULL DEFAULT 'qr'`);
   ensureColumn('bot_sessions', 'pairing_status', `TEXT NOT NULL DEFAULT 'idle'`);
   ensureColumn('bot_sessions', 'pairing_expires_at', `TEXT`);
+  ensureColumn('users', 'menu_language', `TEXT`);
+  ensureColumn('users', 'ai_language', `TEXT`);
+  ensureColumn('groups', 'menu_language', `TEXT`);
+  ensureColumn('groups', 'ai_language', `TEXT`);
+  ensureColumn('plugins', 'dependencies_json', `TEXT NOT NULL DEFAULT '[]'`);
+  ensureColumn('plugins', 'documentation', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('plugins', 'last_error', `TEXT`);
+  ensureColumn('automations', 'condition_expr', `TEXT NOT NULL DEFAULT 'always'`);
+  ensureColumn('automations', 'action_json', `TEXT NOT NULL DEFAULT '{}'`);
+  ensureColumn('automations', 'max_retries', `INTEGER NOT NULL DEFAULT 1`);
+  ensureColumn('automations', 'last_error', `TEXT`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS menu_configs (
+      id TEXT PRIMARY KEY,
+      mode TEXT NOT NULL DEFAULT 'hybrid',
+      default_language TEXT NOT NULL DEFAULT 'id',
+      footer_text TEXT NOT NULL DEFAULT 'Freya-san bot by Pak Ujan',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS menu_categories (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      target_menu_key TEXT NOT NULL,
+      permission TEXT NOT NULL DEFAULT 'public',
+      language TEXT NOT NULL DEFAULT 'all',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      visible INTEGER NOT NULL DEFAULT 1,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS menu_items (
+      id TEXT PRIMARY KEY,
+      category_id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      command_name TEXT NOT NULL,
+      action_kind TEXT NOT NULL DEFAULT 'command',
+      target_key TEXT,
+      permission TEXT NOT NULL DEFAULT 'public',
+      language TEXT NOT NULL DEFAULT 'all',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      visible INTEGER NOT NULL DEFAULT 1,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      usage_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (category_id) REFERENCES menu_categories(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_commands (
+      name TEXT PRIMARY KEY,
+      category TEXT NOT NULL DEFAULT 'GENERAL',
+      description TEXT NOT NULL DEFAULT '',
+      mode TEXT NOT NULL DEFAULT 'visual',
+      visual_blocks_json TEXT NOT NULL DEFAULT '[]',
+      script_source TEXT NOT NULL DEFAULT '',
+      permission TEXT NOT NULL DEFAULT 'public',
+      cooldown_sec INTEGER NOT NULL DEFAULT 3,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      aliases_json TEXT NOT NULL DEFAULT '[]',
+      created_by TEXT NOT NULL DEFAULT 'owner',
+      usage_count INTEGER NOT NULL DEFAULT 0,
+      last_tested_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS api_keys_vault (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      endpoint TEXT NOT NULL DEFAULT '',
+      encrypted_key TEXT NOT NULL,
+      key_masked TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      access_scope TEXT NOT NULL DEFAULT 'owner_and_plugins',
+      rate_limit_per_min INTEGER NOT NULL DEFAULT 60,
+      quota_monthly INTEGER NOT NULL DEFAULT 10000,
+      usage_count INTEGER NOT NULL DEFAULT 0,
+      error_count INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      last_used_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS translations (
+      id TEXT PRIMARY KEY,
+      lang TEXT NOT NULL,
+      key TEXT NOT NULL,
+      text_value TEXT NOT NULL,
+      namespace TEXT NOT NULL DEFAULT 'bot',
+      natural_notes TEXT NOT NULL DEFAULT '',
+      review_status TEXT NOT NULL DEFAULT 'approved',
+      reviewed_by TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(lang, key)
+    );
+
+    CREATE TABLE IF NOT EXISTS wa_provider_configs (
+      provider_id TEXT PRIMARY KEY,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 0,
+      config_json TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cmd_usage_name_time ON command_usage(command_name, created_at);
+    CREATE INDEX IF NOT EXISTS idx_cmd_usage_user_time ON command_usage(user_phone, created_at);
+    CREATE INDEX IF NOT EXISTS idx_logs_level_time ON logs(level, created_at);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_time ON audit_logs(created_at);
+    CREATE INDEX IF NOT EXISTS idx_menu_items_cat_order ON menu_items(category_id, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_game_sessions_scope_status ON game_sessions(chat_id, chat_scope, status);
+    CREATE INDEX IF NOT EXISTS idx_translations_lang_status ON translations(lang, review_status);
+  `);
+
+  // Ensure newer audit columns exist on pre-existing SQLite databases
+  ensureColumn('custom_commands', 'id', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('custom_commands', 'builder_mode', `TEXT NOT NULL DEFAULT 'visual'`);
+  ensureColumn('custom_commands', 'script_template', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('api_keys_vault', 'provider_name', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('api_keys_vault', 'label', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('api_keys_vault', 'masked_key', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('api_keys_vault', 'daily_quota', `INTEGER NOT NULL DEFAULT 1000`);
+  ensureColumn('api_keys_vault', 'daily_used', `INTEGER NOT NULL DEFAULT 0`);
+  ensureColumn('api_keys_vault', 'enabled', `INTEGER NOT NULL DEFAULT 1`);
+  ensureColumn('translations', 'namespace', `TEXT NOT NULL DEFAULT 'bot'`);
+  ensureColumn('ai_agents', 'risk_level', `TEXT NOT NULL DEFAULT 'low'`);
+  ensureColumn('ai_agents', 'enabled', `INTEGER NOT NULL DEFAULT 1`);
+  ensureColumn('scheduled_tasks', 'attempt_count', `INTEGER NOT NULL DEFAULT 1`);
+
+  db.exec(`
+    UPDATE custom_commands SET id = name WHERE id IS NULL OR id = '';
+    UPDATE custom_commands SET builder_mode = mode WHERE (builder_mode IS NULL OR builder_mode = '') AND mode IS NOT NULL;
+    UPDATE custom_commands SET script_template = script_source WHERE (script_template IS NULL OR script_template = '') AND script_source IS NOT NULL;
+    UPDATE api_keys_vault SET provider_name = provider WHERE (provider_name IS NULL OR provider_name = '') AND provider IS NOT NULL;
+    UPDATE api_keys_vault SET label = name WHERE (label IS NULL OR label = '') AND name IS NOT NULL;
+    UPDATE api_keys_vault SET masked_key = key_masked WHERE (masked_key IS NULL OR masked_key = '') AND key_masked IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_api_vault_provider ON api_keys_vault(provider_name, enabled);
+  `);
 }
 
 export function seedDatabase(): void {
@@ -970,6 +1115,10 @@ export function seedDatabase(): void {
     ['project_version', process.env.PROJECT_VERSION || '5.0', 0],
     ['bot_name', process.env.BOT_NAME || 'Freya-san bot by Pak Ujan', 0],
     ['default_language', process.env.DEFAULT_LANGUAGE || 'id', 0],
+    ['menu_language', process.env.DEFAULT_LANGUAGE || 'id', 0],
+    ['ai_language', process.env.DEFAULT_LANGUAGE || 'id', 0],
+    ['wa_menu_mode', 'hybrid', 0],
+    ['active_wa_provider', 'baileys', 0],
     ['language_style', 'santai_nonbaku', 0],
     ['default_theme', process.env.DEFAULT_THEME || 'system', 0],
     ['blue_tick_enabled', 'false', 0],
@@ -977,7 +1126,8 @@ export function seedDatabase(): void {
     ['auto_nexara', 'false', 0],
     ['antidelete_pc', 'false', 0],
     ['multi_room_concurrent', 'false', 0],
-    ['owner_number_configured', process.env.OWNER_NUMBER || '+6285129878352', 1],
+    ['owner_number_configured', process.env.OWNER_NUMBER || '', 1],
+    ['owner_name_configured', process.env.OWNER_NAME || 'Pak Ujan', 0],
     ['redeem_global_cooldown_sec', '3', 0],
     ['redeem_max_balance_cap', '100000', 0],
     ['redeem_max_exp_cap', '50000', 0],
@@ -1094,10 +1244,24 @@ export function seedDatabase(): void {
     }
   })();
 
-  // 4. Bot session row
+  // 4. Bot session & provider configs
   db.prepare(
     `INSERT OR IGNORE INTO bot_sessions (id, status) VALUES ('primary', 'disconnected')`,
   ).run();
+
+  db.prepare(
+    `INSERT OR IGNORE INTO menu_configs (id, mode, default_language, footer_text) VALUES ('default', 'hybrid', 'id', 'Freya-san bot by Pak Ujan')`,
+  ).run();
+
+  db.prepare(`
+    INSERT OR IGNORE INTO wa_provider_configs (provider_id, enabled, is_active, config_json)
+    VALUES ('baileys', 1, 1, ?)
+  `).run(JSON.stringify({ library: '@whiskeysockets/baileys', supportsQr: true, supportsPairingCode: true }));
+
+  db.prepare(`
+    INSERT OR IGNORE INTO wa_provider_configs (provider_id, enabled, is_active, config_json)
+    VALUES ('meta_cloud', 0, 0, ?)
+  `).run(JSON.stringify({ apiVersion: 'v21.0', supportsQr: false, supportsPairingCode: false }));
 
   // 5. Plugins & AI Providers & Agents
   const insertPlugin = db.prepare(`
@@ -1651,24 +1815,58 @@ export function seedDatabase(): void {
   }
 }
 
+const SENSITIVE_LOG_KEYS = /(passcode|password|secret|token|api[_-]?key|private[_-]?key|pairing[_-]?code|qr[_-]?data|noise[_-]?key|credential|authorization)/i;
+
+export function sanitizeStringForLog(input: string): string {
+  return String(input || '')
+    .replace(/Bearer\s+[A-Za-z0-9\-_.~+/]+=*/gi, 'Bearer [REDACTED]')
+    .replace(/data:image\/[^;\s]+;base64,[A-Za-z0-9+/=]+/gi, '[REDACTED_DATA_URL]')
+    .replace(/(AIza[0-9A-Za-z\-_]{20,}|sk-[A-Za-z0-9]{16,}|EAAG[A-Za-z0-9]{16,})/g, '[REDACTED_API_KEY]')
+    .slice(0, 2000);
+}
+
+export function sanitizeForLog(value: unknown, depth = 0): unknown {
+  if (depth > 5) return '[TRUNCATED]';
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return sanitizeStringForLog(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.slice(0, 30).map((item) => sanitizeForLog(item, depth + 1));
+  if (typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (SENSITIVE_LOG_KEYS.test(k)) {
+        out[k] = '[REDACTED]';
+      } else {
+        out[k] = sanitizeForLog(v, depth + 1);
+      }
+    }
+    return out;
+  }
+  return String(value);
+}
+
 export function addSystemLog(level: 'info' | 'warn' | 'error', module: string, message: string, meta?: unknown): void {
+  const safeMsg = sanitizeStringForLog(message);
+  const safeMeta = meta !== undefined ? JSON.stringify(sanitizeForLog(meta)) : null;
   db.prepare('INSERT INTO logs (level, module, message, meta_json) VALUES (?, ?, ?, ?)').run(
     level,
     module,
-    message,
-    meta ? JSON.stringify(meta) : null,
+    safeMsg,
+    safeMeta,
   );
   if (level === 'error') {
-    db.prepare('INSERT INTO errors (module, message) VALUES (?, ?)').run(module, message);
+    db.prepare('INSERT INTO errors (module, message) VALUES (?, ?)').run(module, safeMsg);
   }
 }
 
 export function addAuditLog(actor: string, action: string, target: string, details?: unknown): void {
+  const safeTarget = sanitizeStringForLog(target);
+  const safeDetails = details !== undefined ? JSON.stringify(sanitizeForLog(details)) : null;
   db.prepare('INSERT INTO audit_logs (actor, action, target, details_json) VALUES (?, ?, ?, ?)').run(
     actor,
     action,
-    target,
-    details ? JSON.stringify(details) : null,
+    safeTarget,
+    safeDetails,
   );
 }
 
@@ -1723,11 +1921,66 @@ export function applyUserBalanceAndExp(
   })();
 }
 
-// Security helpers for Owner Passcode + Bearer token signing
-const RUNTIME_SESSION_SECRET =
-  process.env.SESSION_SECRET && process.env.SESSION_SECRET.length >= 16
-    ? process.env.SESSION_SECRET
-    : crypto.randomBytes(32).toString('hex');
+// Security helpers for Owner Passcode + Bearer token signing + Vault encryption
+function resolveSessionSecret(): string {
+  const configured = process.env.SESSION_SECRET?.trim() || '';
+  if (process.env.NODE_ENV === 'production') {
+    if (configured.length < 16) {
+      throw new Error(
+        '[SECURITY] SESSION_SECRET wajib diisi minimal 16 karakter (disarankan 32+ karakter acak) saat NODE_ENV=production agar token sesi stabil & aman.',
+      );
+    }
+    return configured;
+  }
+  return configured.length >= 16 ? configured : crypto.randomBytes(32).toString('hex');
+}
+
+const RUNTIME_SESSION_SECRET = resolveSessionSecret();
+
+function resolveVaultMasterKey(): Buffer {
+  const explicit = process.env.API_VAULT_SECRET?.trim() || process.env.BACKUP_ENCRYPTION_KEY?.trim() || '';
+  if (process.env.NODE_ENV === 'production' && explicit.length < 16) {
+    throw new Error(
+      '[SECURITY] API_VAULT_SECRET atau BACKUP_ENCRYPTION_KEY wajib diisi minimal 16 karakter di mode produksi untuk enkripsi API key.',
+    );
+  }
+  const source = explicit.length >= 16 ? explicit : RUNTIME_SESSION_SECRET;
+  return crypto.createHash('sha256').update(`freya-vault:${source}`).digest();
+}
+
+export function maskSecretValue(raw: string): string {
+  const clean = String(raw || '').trim();
+  if (!clean) return '********';
+  if (clean.length <= 8) return '*'.repeat(clean.length);
+  return `${clean.slice(0, 4)}...${clean.slice(-4)}`;
+}
+
+export function encryptVaultSecret(plaintext: string): string {
+  const key = resolveVaultMasterKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return JSON.stringify({
+    v: 1,
+    iv: iv.toString('hex'),
+    tag: tag.toString('hex'),
+    data: encrypted.toString('hex'),
+  });
+}
+
+export function decryptVaultSecret(envelopeStr: string): string | null {
+  try {
+    const env = JSON.parse(envelopeStr);
+    const key = resolveVaultMasterKey();
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(env.iv, 'hex'));
+    decipher.setAuthTag(Buffer.from(env.tag, 'hex'));
+    const plain = Buffer.concat([decipher.update(Buffer.from(env.data, 'hex')), decipher.final()]);
+    return plain.toString('utf8');
+  } catch {
+    return null;
+  }
+}
 
 export function hashPasscode(passcode: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -1754,6 +2007,40 @@ export function isOwnerAuthConfigured(): { hasEnvPasscode: boolean; hasClaimedHa
     hasEnvPasscode,
     hasClaimedHash: Boolean(row && row.value.includes(':')),
   };
+}
+
+export function claimOwnerPasscodeAtomic(hashedPasscode: string): { ok: boolean; error?: string } {
+  const tx = db.transaction(() => {
+    if (process.env.OWNER_PASSCODE && process.env.OWNER_PASSCODE.trim().length > 0) {
+      return { ok: false, error: 'Akses owner dikunci lewat OWNER_PASSCODE di environment server.' };
+    }
+    const existing = db
+      .prepare("SELECT value FROM settings WHERE key = 'owner_passcode_hash'")
+      .get() as { value: string } | undefined;
+    if (existing && existing.value.includes(':')) {
+      return { ok: false, error: 'Akses owner udah diklaim. Login aja ya.' };
+    }
+    db.prepare(
+      `INSERT INTO settings (key, value, is_secret, updated_at)
+       VALUES ('owner_passcode_hash', ?, 1, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, is_secret = 1, updated_at = datetime('now')
+       WHERE value IS NULL OR value = ''`,
+    ).run(hashedPasscode);
+    return { ok: true };
+  });
+  return tx.immediate();
+}
+
+export function updateOwnerPasscode(newHashedPasscode: string): { ok: boolean; error?: string } {
+  if (process.env.OWNER_PASSCODE && process.env.OWNER_PASSCODE.trim().length > 0) {
+    return { ok: false, error: 'Passcode owner diatur lewat OWNER_PASSCODE di environment server.' };
+  }
+  db.prepare(
+    `INSERT INTO settings (key, value, is_secret, updated_at)
+     VALUES ('owner_passcode_hash', ?, 1, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, is_secret = 1, updated_at = datetime('now')`,
+  ).run(newHashedPasscode);
+  return { ok: true };
 }
 
 export function verifyOwnerCredentials(passcode: string): boolean {

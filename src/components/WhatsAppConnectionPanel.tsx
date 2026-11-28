@@ -16,6 +16,7 @@ import {
 
 export interface WaStatusSnapshot {
   status: string;
+  connectionState?: 'disconnected' | 'connecting' | 'qr_ready' | 'pairing_code_ready' | 'authenticated' | 'connected' | 'reconnecting' | 'failed';
   phoneNumber: string | null;
   qrDataUrl: string | null;
   lastError: string | null;
@@ -57,32 +58,34 @@ function validatePairingPhoneClient(rawInput: string): { ok: boolean; normalized
     return {
       ok: false,
       normalized: '',
-      error: 'Masukin nomor WhatsApp dulu pakai kode negara (contoh: 6281234567890).',
+      error: 'Masukin nomor WhatsApp dulu (contoh: 628xxxxxxxxxx atau 08xxxxxxxxxx).',
     };
   }
-  const stripped = trimmed.replace(/[\s\-().+]/g, '');
-  if (!/^\d+$/.test(stripped)) {
+  let digits = trimmed.replace(/\D/g, '');
+  if (!digits) {
     return {
       ok: false,
       normalized: '',
-      error: 'Nomor WhatsApp cuma boleh berisi angka dan kode negara (contoh: 6281234567890).',
+      error: 'Nomor WhatsApp cuma boleh berisi angka dan kode negara (contoh: 628xxxxxxxxxx).',
     };
   }
-  if (stripped.startsWith('0')) {
+  if (digits.startsWith('08')) {
+    digits = `62${digits.slice(1)}`;
+  } else if (digits.startsWith('0')) {
     return {
       ok: false,
       normalized: '',
-      error: 'Nomor harus diawali kode negara, bukan angka 0 (misal ganti 08xx jadi 628xx).',
+      error: 'Nomor nggak boleh diawali 0 selain awalan 08xx Indonesia (contoh: 628xxxxxxxxxx).',
     };
   }
-  if (stripped.length < 8 || stripped.length > 15) {
+  if (digits.length < 8 || digits.length > 15) {
     return {
       ok: false,
       normalized: '',
       error: 'Panjang nomor WhatsApp nggak valid (wajib 8–15 digit termasuk kode negara).',
     };
   }
-  return { ok: true, normalized: stripped };
+  return { ok: true, normalized: digits };
 }
 
 function formatPairingCodeDisplay(code: string): string {
@@ -171,6 +174,39 @@ export const WhatsAppConnectionPanel: React.FC<WhatsAppConnectionPanelProps> = (
   const [resetPanelMode, setResetPanelMode] = useState<'none' | 'connection' | 'full_session'>('none');
   const [confirmFullResetChecked, setConfirmFullResetChecked] = useState(false);
 
+  // Dual Provider State (Baileys vs Meta Cloud API)
+  const [providerData, setProviderData] = useState<{ activeProviderId: 'baileys' | 'meta_cloud'; providers: any[]; coexistencePolicy: string } | null>(null);
+  const [metaPhoneId, setMetaPhoneId] = useState('');
+  const [metaWabaId, setMetaWabaId] = useState('');
+  const [metaAccessToken, setMetaAccessToken] = useState('');
+  const [metaVerifyToken, setMetaVerifyToken] = useState('');
+  const [metaAppSecret, setMetaAppSecret] = useState('');
+  const [metaVerifyResult, setMetaVerifyResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [countdownSec, setCountdownSec] = useState<number | null>(null);
+
+  const loadProviders = async () => {
+    const res = await apiFetch('/api/admin/whatsapp/providers');
+    if (res?.ok) setProviderData(res);
+  };
+
+  useEffect(() => {
+    void loadProviders();
+  }, []);
+
+  useEffect(() => {
+    if (!waStatus?.pairingExpiresAt || (waStatus?.pairingStatus !== 'code_ready' && waStatus?.pairingStatus !== 'waiting')) {
+      setCountdownSec(null);
+      return;
+    }
+    const updateTimer = () => {
+      const diff = Math.max(0, Math.floor((new Date(waStatus.pairingExpiresAt!).getTime() - Date.now()) / 1000));
+      setCountdownSec(diff);
+    };
+    updateTimer();
+    const t = setInterval(updateTimer, 1000);
+    return () => clearInterval(t);
+  }, [waStatus?.pairingExpiresAt, waStatus?.pairingStatus]);
+
   useEffect(() => {
     if (waStatus?.pairingStatus === 'failed' || waStatus?.pairingStatus === 'expired' || waStatus?.status === 'error') {
       setFeedback((prev) => (prev?.ok ? null : prev));
@@ -185,6 +221,8 @@ export const WhatsAppConnectionPanel: React.FC<WhatsAppConnectionPanelProps> = (
     waStatus?.pairingStatus === 'code_ready';
 
   const pairingBadge = getPairingBadgeMeta(waStatus?.pairingStatus);
+  const activeProviderId = providerData?.activeProviderId || 'baileys';
+  const metaDescriptor = providerData?.providers?.find((p) => p.id === 'meta_cloud');
 
   const handleConnectQr = async () => {
     setFeedback(null);
@@ -327,10 +365,171 @@ export const WhatsAppConnectionPanel: React.FC<WhatsAppConnectionPanelProps> = (
           </div>
         </div>
 
+        {/* Dual Provider Switcher */}
+        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/60 space-y-2.5 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-bold text-slate-800 dark:text-slate-200">WhatsApp Connection Provider</span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  const res = await apiFetch('/api/admin/whatsapp/providers/select', {
+                    method: 'POST',
+                    body: JSON.stringify({ providerId: 'baileys' }),
+                  });
+                  setFeedback({ ok: Boolean(res?.ok), text: res?.message || 'Provider Baileys dipilih.' });
+                  await loadProviders();
+                }}
+                className={`px-3 py-1 rounded-lg font-semibold border ${
+                  activeProviderId === 'baileys'
+                    ? 'border-blue-600 bg-blue-700 text-white'
+                    : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900'
+                }`}
+              >
+                Baileys Linked Devices
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const res = await apiFetch('/api/admin/whatsapp/providers/select', {
+                    method: 'POST',
+                    body: JSON.stringify({ providerId: 'meta_cloud' }),
+                  });
+                  setFeedback({ ok: Boolean(res?.ok), text: res?.message || 'Provider Meta Cloud API dipilih.' });
+                  await loadProviders();
+                }}
+                className={`px-3 py-1 rounded-lg font-semibold border ${
+                  activeProviderId === 'meta_cloud'
+                    ? 'border-blue-600 bg-blue-700 text-white'
+                    : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900'
+                }`}
+              >
+                Meta Cloud API (Resmi)
+              </button>
+            </div>
+          </div>
+          {providerData?.coexistencePolicy && (
+            <p className="text-[11px] text-slate-500">{providerData.coexistencePolicy}</p>
+          )}
+        </div>
+
+        {activeProviderId === 'meta_cloud' && (
+          <div className="p-4 rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50/40 dark:bg-blue-950/20 space-y-3 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-bold text-slate-900 dark:text-white">
+                Konfigurasi Meta WhatsApp Business Cloud API
+              </div>
+              <span className="font-mono px-2 py-0.5 rounded bg-slate-900 text-white text-[11px]">
+                State: {metaDescriptor?.connectionState || 'disconnected'}
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-600 dark:text-slate-300">
+              Webhook Endpoint: <code className="font-mono">/api/webhooks/meta-whatsapp</code> (GET challenge + POST signature <code className="font-mono">X-Hub-Signature-256</code>).
+            </div>
+            {Array.isArray(metaDescriptor?.configurationChecklist) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {metaDescriptor.configurationChecklist.map((c: any) => (
+                  <div key={c.key} className="px-2.5 py-1.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                    <span className="truncate">{c.label}</span>
+                    <span className={`font-mono text-[10px] font-bold ${c.configured ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {c.configured ? 'SIAP' : c.required ? 'WAJIB' : 'OPSIONAL'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <input
+                type="text"
+                value={metaPhoneId}
+                onChange={(e) => setMetaPhoneId(e.target.value)}
+                placeholder="Phone Number ID"
+                className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono"
+              />
+              <input
+                type="text"
+                value={metaWabaId}
+                onChange={(e) => setMetaWabaId(e.target.value)}
+                placeholder="WABA ID (opsional)"
+                className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono"
+              />
+              <input
+                type="password"
+                value={metaAccessToken}
+                onChange={(e) => setMetaAccessToken(e.target.value)}
+                placeholder="Access Token (tersimpan terenkripsi)"
+                className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono"
+              />
+              <input
+                type="password"
+                value={metaAppSecret}
+                onChange={(e) => setMetaAppSecret(e.target.value)}
+                placeholder="App Secret (HMAC X-Hub-Signature-256)"
+                className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono"
+              />
+              <input
+                type="text"
+                value={metaVerifyToken}
+                onChange={(e) => setMetaVerifyToken(e.target.value)}
+                placeholder="Webhook Verify Token"
+                className="sm:col-span-2 px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  const res = await apiFetch('/api/admin/whatsapp/providers/meta', {
+                    method: 'PATCH',
+                    body: JSON.stringify({
+                      phoneNumberId: metaPhoneId || undefined,
+                      businessAccountId: metaWabaId || undefined,
+                      accessToken: metaAccessToken || undefined,
+                      appSecret: metaAppSecret || undefined,
+                      verifyToken: metaVerifyToken || undefined,
+                      enabled: true,
+                    }),
+                  });
+                  setMetaAccessToken('');
+                  setMetaAppSecret('');
+                  setFeedback({ ok: Boolean(res?.ok), text: res?.message || 'Konfigurasi Meta Cloud API disimpan.' });
+                  await loadProviders();
+                }}
+                className="px-3.5 py-1.5 rounded-lg bg-blue-700 text-white font-semibold"
+              >
+                Simpan Kredensial Meta
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const res = await apiFetch('/api/admin/whatsapp/providers/meta/verify', { method: 'POST' });
+                  setMetaVerifyResult({ ok: Boolean(res?.ok), message: res?.message || 'Verifikasi selesai.' });
+                  await loadProviders();
+                }}
+                className="px-3.5 py-1.5 rounded-lg border border-blue-600 text-blue-700 dark:text-blue-400 font-semibold"
+              >
+                Verifikasi Meta Graph API
+              </button>
+            </div>
+            {metaVerifyResult && (
+              <div className={`p-2.5 rounded-lg border ${metaVerifyResult.ok ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-rose-300 bg-rose-50 text-rose-800'}`}>
+                {metaVerifyResult.message}
+              </div>
+            )}
+            {Array.isArray(metaDescriptor?.limitations) && (
+              <ul className="list-disc pl-4 text-[11px] text-slate-600 dark:text-slate-400 space-y-0.5">
+                {metaDescriptor.limitations.map((lim: string, i: number) => (
+                  <li key={i}>{lim}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
         {/* Status Summary Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-slate-500">Status Koneksi</span>
+            <span className="text-slate-500">Status &amp; State Engine</span>
             <span
               className={`font-mono font-bold ${
                 isConnected
@@ -340,13 +539,14 @@ export const WhatsAppConnectionPanel: React.FC<WhatsAppConnectionPanelProps> = (
                     : 'text-blue-700 dark:text-blue-400'
               }`}
             >
-              {waStatus?.status ?? 'disconnected'}
+              {waStatus?.connectionState || waStatus?.status || 'disconnected'}
             </span>
           </div>
           <div className="flex items-center justify-between gap-2">
             <span className="text-slate-500">Status Pairing</span>
             <span className={`px-2 py-0.5 rounded border text-[11px] font-semibold ${pairingBadge.className}`}>
               {pairingBadge.label}
+              {countdownSec !== null && countdownSec > 0 ? ` (${countdownSec}s)` : ''}
             </span>
           </div>
           <div className="flex items-center justify-between gap-2">
@@ -439,6 +639,28 @@ export const WhatsAppConnectionPanel: React.FC<WhatsAppConnectionPanelProps> = (
                 <QrCode className="w-3.5 h-3.5" />
                 {actionBusy === 'qr' ? 'Menyiapkan QR...' : 'Hubungkan dengan QR Code'}
               </button>
+              {!isConnected && (
+                <button
+                  type="button"
+                  data-testid="refresh-qr-btn"
+                  disabled={actionBusy !== null}
+                  onClick={async () => {
+                    setFeedback(null);
+                    setActionBusy('refresh_qr');
+                    try {
+                      const res = await apiFetch('/api/admin/whatsapp/refresh-qr', { method: 'POST' });
+                      setFeedback({ ok: Boolean(res?.ok), text: res?.message || res?.error || 'QR baru sedang disiapkan.' });
+                      await onRefresh();
+                    } finally {
+                      setActionBusy(null);
+                    }
+                  }}
+                  className="px-3.5 py-2 rounded-lg border border-blue-600 text-blue-700 dark:text-blue-400 text-xs font-semibold flex items-center gap-1.5 hover:bg-blue-50 dark:hover:bg-blue-950/30"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Refresh QR
+                </button>
+              )}
               {isWaitingAuth && (
                 <button
                   type="button"
@@ -530,7 +752,7 @@ export const WhatsAppConnectionPanel: React.FC<WhatsAppConnectionPanelProps> = (
                 )}
               </div>
               <p className="text-[11px] text-slate-500">
-                Pakai format angka internasional lengkap (contoh: <code className="font-mono">6281234567890</code>). Jangan awali pakai angka <code className="font-mono">0</code>.
+                Masukin nomor pakai kode negara (contoh: <code className="font-mono">6281234567890</code>) atau awalan <code className="font-mono">08xx</code> (otomatis diubah jadi <code className="font-mono">628xx</code>).
               </p>
               {phoneError && (
                 <div

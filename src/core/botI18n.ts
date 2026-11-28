@@ -97,7 +97,7 @@ const MESSAGES = {
     helpHeader: (cmd: string) => `Panduan *${cmd}*`,
     ping: (latency: number, status: string) =>
       `Pong! Responnya lancar (${latency} ms) · Status koneksi: *${status}*.\n_Freya-san bot by Pak Ujan_`,
-    menuListButton: 'Buka Daftar Menu',
+    menuListButton: 'Pilih Kategori Menu',
     menuBackTitle: '⬅️ Kembali',
     menuBackMainTitle: '⬅️ Kembali ke Menu Utama',
     menuBackMainDesc: 'Balik ke daftar menu utama Freya-san Hub',

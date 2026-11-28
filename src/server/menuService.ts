@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { generateWAMessageFromContent, WAProto } from '@whiskeysockets/baileys';
 import { ALL_COMMANDS } from '../core/commandInventory';
 import { botText, normalizeBotLang, BotLang } from '../core/botI18n';
 import { JKT48_DIFFICULTY_LEVELS, JKT48_TEAM_GROUPS, getTeamsByGroup } from '../core/jkt48Classification';
@@ -147,6 +148,254 @@ const CATEGORY_META: Record<CommandCategory, { icon: string; descId: string; des
   },
 };
 
+export type MenuDeliveryMode = 'hybrid' | 'interactive_only' | 'text_only';
+
+export interface MenuCategoryRecord {
+  id: string;
+  title: string;
+  description: string;
+  target_menu_key: string;
+  permission: 'public' | 'group_admin' | 'owner';
+  language: string;
+  sort_order: number;
+  visible: number;
+  enabled: number;
+}
+
+export interface MenuItemRecord {
+  id: string;
+  category_id: string;
+  label: string;
+  description: string;
+  command_name: string;
+  action_kind: 'command' | 'submenu';
+  target_key: string | null;
+  permission: 'public' | 'group_admin' | 'owner';
+  language: string;
+  sort_order: number;
+  visible: number;
+  enabled: number;
+  usage_count: number;
+}
+
+let menuSeeded = false;
+export function ensureMenuManagementSeeded(): void {
+  if (menuSeeded) return;
+  const catCount = (db.prepare('SELECT COUNT(*) AS c FROM menu_categories').get() as { c: number }).c;
+  if (catCount === 0) {
+    const insertCat = db.prepare(`
+      INSERT OR IGNORE INTO menu_categories (id, title, description, target_menu_key, permission, language, sort_order, visible, enabled)
+      VALUES (?, ?, ?, ?, ?, 'all', ?, 1, 1)
+    `);
+    const insertItem = db.prepare(`
+      INSERT OR IGNORE INTO menu_items (id, category_id, label, description, command_name, action_kind, target_key, permission, language, sort_order, visible, enabled)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'all', ?, 1, 1)
+    `);
+    db.transaction(() => {
+      const quickCats: Array<[string, string, string, string, 'public' | 'group_admin' | 'owner', number]> = [
+        ['quick:games', '🎮 Menu Game & Kuis', 'Game solo, Tebak Bom, UNO, Undercover & WW2', 'games', 'public', 1],
+        ['quick:48group', '🌸 Menu 48GROUP', 'Arsip JKT48/AKB48, Level 1-3, Team & Kuis', '48group', 'public', 2],
+        ['quick:economy', '💰 Ekonomi & Streak', 'Balance, limit, transfer, leaderboard & streak', 'economy', 'public', 3],
+        ['quick:premium_redeem', '🎁 Premium & Redeem', 'Cek status premium, klaim kode & benefit', 'premium_redeem', 'public', 4],
+        ['quick:features', '⚡ Fitur Populer Cepat', 'Stiker #sa/#brat2, #tolive, AI Nexara & mockup', 'features', 'public', 5],
+        ['quick:help_info', '❓ Bantuan & Info Bot', 'Cara pakai prefix, gempa, folio & kontak owner', 'help_info', 'public', 6],
+        ['quick:group_settings', '👥 Pengaturan Grup', 'Welcome, left, anti-sistem & streak grup', 'group_settings', 'group_admin', 7],
+        ['quick:bot_settings', '⚙️ Pengaturan Bot', 'Bahasa ID/EN/JA, blue tick & maintenance', 'bot_settings', 'owner', 8],
+        ['quick:owner', '👑 Menu Owner & Admin', 'Manajemen prefix, redeem, grup & server', 'owner', 'owner', 9],
+      ];
+      for (const [id, title, desc, target, perm, order] of quickCats) {
+        insertCat.run(id, title, desc, target, perm, order);
+      }
+
+      ALL_CATEGORIES.forEach((cat, idx) => {
+        const displayCat = cat === '48GROUP' ? '48GROUP GAMES' : cat;
+        insertCat.run(
+          `cat:${cat}`,
+          `${CATEGORY_META[cat].icon} ${displayCat}`,
+          CATEGORY_META[cat].descId,
+          `category:${cat}:1`,
+          cat === 'OWNER' ? 'owner' : 'public',
+          20 + idx,
+        );
+      });
+
+      const starterItems: Array<[string, string, string, string, string, 'command' | 'submenu', string | null, 'public' | 'group_admin' | 'owner', number]> = [
+        ['item-bom', 'quick:games', '💣 Tebak Bom', 'Buka kotak aman satu-satu, awas kena bom!', 'bom', 'command', null, 'public', 1],
+        ['item-undercover', 'quick:games', '🕵️ Undercover', 'Deduksi 210+ kata + Mr. White (peran via PM)', 'undercover', 'command', null, 'public', 2],
+        ['item-uno', 'quick:games', '🃏 UNO Arena', 'Main kartu UNO di grup dengan timeout 60 detik', 'uno', 'command', null, 'public', 3],
+        ['item-48-level', 'quick:48group', '📊 Difficulty Level 1-3', 'Filter kuis & arsip JKT48 dari era terbaru sampai klasik', 'menu', 'submenu', '48group_level', 'public', 1],
+        ['item-48-team', 'quick:48group', '🏷️ Team Explorer', 'Jelajahi Old Team (J/KIII/T), New Team & Other', 'menu', 'submenu', '48group_team', 'public', 2],
+        ['item-profile', 'quick:economy', '🪪 Profil & Balance', 'Cek saldo balance, level, EXP & streak akun kamu', 'profile', 'command', null, 'public', 1],
+        ['item-streak', 'quick:economy', '🔥 Cek Streak Teman', 'Lihat daftar pasangan streak aktif & cara ajak teman', 'streak', 'command', null, 'public', 2],
+        ['item-tolive', 'quick:features', '📸 Live Photo (#tolive)', 'Ubah gambar/video jadi Motion Photo', 'help tolive', 'command', null, 'public', 1],
+        ['item-sa', 'quick:features', '🔊 Sound Sticker (#sa)', 'Gabungin stiker WebP animasi + audio Opus', 'help stickeraudio', 'command', null, 'public', 2],
+      ];
+      for (const [id, catId, label, desc, cmdName, kind, targetKey, perm, order] of starterItems) {
+        insertItem.run(id, catId, label, desc, cmdName, kind, targetKey, perm, order);
+      }
+    })();
+  }
+  menuSeeded = true;
+}
+
+export function getMenuConfig(): { mode: MenuDeliveryMode; defaultLanguage: BotLang; footerText: string; updatedAt: string } {
+  const row = db.prepare(`SELECT mode, default_language, footer_text, updated_at FROM menu_configs WHERE id = 'default'`).get() as
+    | { mode: string; default_language: string; footer_text: string; updated_at: string }
+    | undefined;
+  const mode: MenuDeliveryMode =
+    row?.mode === 'interactive_only' || row?.mode === 'text_only' ? row.mode : 'hybrid';
+  return {
+    mode,
+    defaultLanguage: normalizeBotLang(row?.default_language || 'id'),
+    footerText: row?.footer_text || 'Freya-san bot by Pak Ujan',
+    updatedAt: row?.updated_at || new Date().toISOString(),
+  };
+}
+
+export function updateMenuConfig(patch: {
+  mode?: MenuDeliveryMode;
+  defaultLanguage?: string;
+  footerText?: string;
+  actor?: string;
+}): { mode: MenuDeliveryMode; defaultLanguage: BotLang; footerText: string; updatedAt: string } {
+  const current = getMenuConfig();
+  const nextMode: MenuDeliveryMode =
+    patch.mode === 'hybrid' || patch.mode === 'interactive_only' || patch.mode === 'text_only'
+      ? patch.mode
+      : current.mode;
+  const nextLang = patch.defaultLanguage ? normalizeBotLang(patch.defaultLanguage) : current.defaultLanguage;
+  const nextFooter = patch.footerText?.trim() ? patch.footerText.trim().slice(0, 60) : current.footerText;
+
+  db.prepare(`
+    INSERT INTO menu_configs (id, mode, default_language, footer_text, updated_at)
+    VALUES ('default', ?, ?, ?, datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET
+      mode = excluded.mode,
+      default_language = excluded.default_language,
+      footer_text = excluded.footer_text,
+      updated_at = datetime('now')
+  `).run(nextMode, nextLang, nextFooter);
+
+  db.prepare(`
+    INSERT INTO settings (key, value, is_secret, updated_at) VALUES ('wa_menu_mode', ?, 0, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+  `).run(nextMode);
+
+  return getMenuConfig();
+}
+
+export function listMenuManagementState() {
+  ensureMenuManagementSeeded();
+  const config = getMenuConfig();
+  const categories = db.prepare(`SELECT * FROM menu_categories ORDER BY sort_order ASC, title ASC`).all() as MenuCategoryRecord[];
+  const items = db.prepare(`SELECT * FROM menu_items ORDER BY sort_order ASC, label ASC`).all() as MenuItemRecord[];
+  const fallbackLogs = listMenuFallbackLogs(40);
+  const modeCounts = db
+    .prepare(`SELECT mode, COUNT(*) AS count FROM menu_fallback_logs GROUP BY mode`)
+    .all() as Array<{ mode: string; count: number }>;
+  const topItems = db
+    .prepare(`SELECT id, label, command_name, usage_count FROM menu_items ORDER BY usage_count DESC LIMIT 10`)
+    .all() as Array<{ id: string; label: string; command_name: string; usage_count: number }>;
+
+  return {
+    config,
+    categories,
+    items,
+    analytics: {
+      modeCounts,
+      topItems,
+      recentDeliveries: fallbackLogs,
+    },
+  };
+}
+
+export function upsertMenuCategory(input: Partial<MenuCategoryRecord> & { id?: string; title: string; target_menu_key: string }): MenuCategoryRecord {
+  ensureMenuManagementSeeded();
+  const id = input.id?.trim() || `custom:${crypto.randomBytes(4).toString('hex')}`;
+  const perm = input.permission === 'owner' || input.permission === 'group_admin' ? input.permission : 'public';
+  db.prepare(`
+    INSERT INTO menu_categories (id, title, description, target_menu_key, permission, language, sort_order, visible, enabled, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET
+      title = excluded.title,
+      description = excluded.description,
+      target_menu_key = excluded.target_menu_key,
+      permission = excluded.permission,
+      language = excluded.language,
+      sort_order = excluded.sort_order,
+      visible = excluded.visible,
+      enabled = excluded.enabled,
+      updated_at = datetime('now')
+  `).run(
+    id,
+    input.title.trim().slice(0, 48),
+    (input.description || '').trim().slice(0, 120),
+    input.target_menu_key.trim().slice(0, 64),
+    perm,
+    (input.language || 'all').trim(),
+    Number(input.sort_order ?? 50),
+    input.visible === 0 ? 0 : 1,
+    input.enabled === 0 ? 0 : 1,
+  );
+  return db.prepare(`SELECT * FROM menu_categories WHERE id = ?`).get(id) as MenuCategoryRecord;
+}
+
+export function deleteMenuCategory(id: string): boolean {
+  if (id.startsWith('cat:') || id.startsWith('quick:')) {
+    return false;
+  }
+  const info = db.prepare(`DELETE FROM menu_categories WHERE id = ?`).run(id);
+  return info.changes > 0;
+}
+
+export function upsertMenuItem(input: Partial<MenuItemRecord> & { id?: string; category_id: string; label: string; command_name: string }): MenuItemRecord {
+  ensureMenuManagementSeeded();
+  const id = input.id?.trim() || `item-${crypto.randomBytes(4).toString('hex')}`;
+  const perm = input.permission === 'owner' || input.permission === 'group_admin' ? input.permission : 'public';
+  const actionKind = input.action_kind === 'submenu' ? 'submenu' : 'command';
+  db.prepare(`
+    INSERT INTO menu_items (id, category_id, label, description, command_name, action_kind, target_key, permission, language, sort_order, visible, enabled, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET
+      category_id = excluded.category_id,
+      label = excluded.label,
+      description = excluded.description,
+      command_name = excluded.command_name,
+      action_kind = excluded.action_kind,
+      target_key = excluded.target_key,
+      permission = excluded.permission,
+      language = excluded.language,
+      sort_order = excluded.sort_order,
+      visible = excluded.visible,
+      enabled = excluded.enabled,
+      updated_at = datetime('now')
+  `).run(
+    id,
+    input.category_id.trim(),
+    input.label.trim().slice(0, 48),
+    (input.description || '').trim().slice(0, 120),
+    input.command_name.trim().slice(0, 64),
+    actionKind,
+    input.target_key ? input.target_key.trim().slice(0, 64) : null,
+    perm,
+    (input.language || 'all').trim(),
+    Number(input.sort_order ?? 10),
+    input.visible === 0 ? 0 : 1,
+    input.enabled === 0 ? 0 : 1,
+  );
+  return db.prepare(`SELECT * FROM menu_items WHERE id = ?`).get(id) as MenuItemRecord;
+}
+
+export function deleteMenuItem(id: string): boolean {
+  const info = db.prepare(`DELETE FROM menu_items WHERE id = ?`).run(id);
+  return info.changes > 0;
+}
+
+export function recordMenuItemTap(rowId: string): void {
+  const cleaned = rowId.replace(/^customitem:/, '');
+  db.prepare(`UPDATE menu_items SET usage_count = usage_count + 1 WHERE id = ? OR command_name = ?`).run(cleaned, cleaned);
+}
+
 function clampTitle(text: string, maxLen = 24): string {
   const clean = text.replace(/\s+/g, ' ').trim();
   if (clean.length <= maxLen) return clean;
@@ -196,7 +445,7 @@ export function buildMenuPayload(
 
   // Check top-level protected menus before building
   if (
-    (normalized === 'owner' || normalized === 'bot_settings' || normalized === 'bot' || normalized === 'category:owner') &&
+    (normalized === 'owner' || normalized === 'bot_settings' || normalized === 'bot' || normalized.startsWith('category:owner')) &&
     !ctx.isOwner
   ) {
     return {
@@ -216,6 +465,16 @@ export function buildMenuPayload(
       headerText: t.adminOnly('groupsetting'),
       deniedReason: t.adminOnly('groupsetting'),
     };
+  }
+
+  // Search route: cari <query> / search <query>
+  const searchMatch = rawTarget.trim().match(/^(?:cari|search)\s+(.+)$/i);
+  if (searchMatch) {
+    return buildMenuSearchPayload(searchMatch[1].trim(), 1, ctx);
+  }
+  const searchPageMatch = rawTarget.trim().match(/^search_page:(\d+):(.*)$/i);
+  if (searchPageMatch) {
+    return buildMenuSearchPayload(searchPageMatch[2].trim(), Math.max(1, Number(searchPageMatch[1] || 1)), ctx);
   }
 
   // Category route: category:<CAT>[:page] or exact category name
@@ -272,101 +531,177 @@ function buildMainHeader(ctx: MenuBuildContext): string {
 }
 
 function buildMainMenu(ctx: MenuBuildContext): InteractiveMenuPayload {
+  ensureMenuManagementSeeded();
   const lang = normalizeBotLang(ctx.lang);
   const t = botText(lang);
   const p = ctx.prefix;
+  const menuCfg = getMenuConfig();
 
-  const quickNavRows: InteractiveMenuRow[] = [
+  // Live DB queries for categories, custom items, and command counts
+  const dbCats = db
+    .prepare(`SELECT * FROM menu_categories WHERE enabled = 1 AND visible = 1 ORDER BY sort_order ASC`)
+    .all() as MenuCategoryRecord[];
+  const dbCatMap = new Map(dbCats.map((c) => [c.id, c]));
+
+  const liveCountsRows = db
+    .prepare(`SELECT category, COUNT(*) AS c FROM commands WHERE enabled = 1 GROUP BY category`)
+    .all() as Array<{ category: string; c: number }>;
+  const customCountsRows = db
+    .prepare(`SELECT category, COUNT(*) AS c FROM custom_commands WHERE enabled = 1 GROUP BY category`)
+    .all() as Array<{ category: string; c: number }>;
+
+  const liveCountMap = new Map<string, number>();
+  for (const r of liveCountsRows) liveCountMap.set(r.category, r.c);
+  for (const r of customCountsRows) liveCountMap.set(r.category, (liveCountMap.get(r.category) || 0) + r.c);
+
+  const defaultQuickRows: Array<{ id: string; title: string; desc: string; target: string; perm: 'public' | 'group_admin' | 'owner'; groupOnly?: boolean }> = [
     {
-      id: 'menu:games',
-      title: clampTitle(lang === 'en' ? '🎮 Games & Quizzes' : lang === 'ja' ? '🎮 ゲーム＆クイズ' : '🎮 Menu Game & Kuis'),
-      description: clampDesc(lang === 'en' ? 'Solo, Bom, UNO, Werewolf & Undercover' : lang === 'ja' ? 'ボム・UNO・人狼・ワードウルフなど' : 'Game solo, Tebak Bom, UNO, Undercover & WW2'),
-      command: `${p}menu games`,
-      requiredPermission: 'public',
-      actionKind: 'submenu',
+      id: 'quick:games',
+      title: lang === 'en' ? '🎮 Games & Quizzes' : lang === 'ja' ? '🎮 ゲーム＆クイズ' : '🎮 Menu Game & Kuis',
+      desc: lang === 'en' ? 'Solo, Bom, UNO, Werewolf & Undercover' : lang === 'ja' ? 'ボム・UNO・人狼・ワードウルフなど' : 'Game solo, Tebak Bom, UNO, Undercover & WW2',
+      target: 'games',
+      perm: 'public',
     },
     {
-      id: 'menu:48group',
-      title: clampTitle(lang === 'en' ? '🌸 48Group Center' : lang === 'ja' ? '🌸 48Groupセンター' : '🌸 Menu 48GROUP'),
-      description: clampDesc(lang === 'en' ? 'Archive, Levels 1-3, Teams & 48 Quizzes' : lang === 'ja' ? 'アーカイブ・難易度1-3・チーム・クイズ' : 'Arsip JKT48/AKB48, Level 1-3, Team & Kuis'),
-      command: `${p}menu 48group`,
-      requiredPermission: 'public',
-      actionKind: 'submenu',
+      id: 'quick:48group',
+      title: lang === 'en' ? '🌸 48Group Center' : lang === 'ja' ? '🌸 48Groupセンター' : '🌸 Menu 48GROUP',
+      desc: lang === 'en' ? 'Archive, Levels 1-3, Teams & 48 Quizzes' : lang === 'ja' ? 'アーカイブ・難易度1-3・チーム・クイズ' : 'Arsip JKT48/AKB48, Level 1-3, Team & Kuis',
+      target: '48group',
+      perm: 'public',
     },
     {
-      id: 'menu:economy',
-      title: clampTitle(lang === 'en' ? '💰 Economy & Streak' : lang === 'ja' ? '💰 残高・リミット' : '💰 Ekonomi & Streak'),
-      description: clampDesc(lang === 'en' ? 'Balance, EXP, addlimit, leaderboard & streak' : lang === 'ja' ? '残高・EXP・リミット購入・ランキング' : 'Balance, limit, transfer, leaderboard & streak'),
-      command: `${p}menu economy`,
-      requiredPermission: 'public',
-      actionKind: 'submenu',
+      id: 'quick:economy',
+      title: lang === 'en' ? '💰 Economy & Streak' : lang === 'ja' ? '💰 残高・リミット' : '💰 Ekonomi & Streak',
+      desc: lang === 'en' ? 'Balance, EXP, addlimit, leaderboard & streak' : lang === 'ja' ? '残高・EXP・リミット購入・ランキング' : 'Balance, limit, transfer, leaderboard & streak',
+      target: 'economy',
+      perm: 'public',
     },
     {
-      id: 'menu:premium_redeem',
-      title: clampTitle(lang === 'en' ? '🎁 Premium & Redeem' : lang === 'ja' ? '🎁 プレミアム・引き換え' : '🎁 Premium & Redeem'),
-      description: clampDesc(lang === 'en' ? 'Check premium status & claim redeem codes' : lang === 'ja' ? 'プレミアム確認とコード引き換え' : 'Cek status premium, klaim kode & benefit'),
-      command: `${p}menu premium_redeem`,
-      requiredPermission: 'public',
-      actionKind: 'submenu',
+      id: 'quick:premium_redeem',
+      title: lang === 'en' ? '🎁 Premium & Redeem' : lang === 'ja' ? '🎁 プレミアム・引き換え' : '🎁 Premium & Redeem',
+      desc: lang === 'en' ? 'Check premium status & claim redeem codes' : lang === 'ja' ? 'プレミアム確認とコード引き換え' : 'Cek status premium, klaim kode & benefit',
+      target: 'premium_redeem',
+      perm: 'public',
     },
     {
-      id: 'menu:features',
-      title: clampTitle(lang === 'en' ? '⚡ Quick Features' : lang === 'ja' ? '⚡ クイック機能' : '⚡ Fitur Populer Cepat'),
-      description: clampDesc(lang === 'en' ? 'Stickers (#sa/#brat2), #tolive, Nexara & mockups' : lang === 'ja' ? '音声スタンプ・tolive・AI・モックアップ' : 'Stiker #sa/#brat2, #tolive, AI Nexara & mockup'),
-      command: `${p}menu features`,
-      requiredPermission: 'public',
-      actionKind: 'submenu',
+      id: 'quick:features',
+      title: lang === 'en' ? '⚡ Quick Features' : lang === 'ja' ? '⚡ クイック機能' : '⚡ Fitur Populer Cepat',
+      desc: lang === 'en' ? 'Stickers (#sa/#brat2), #tolive, Nexara & mockups' : lang === 'ja' ? '音声スタンプ・tolive・AI・モックアップ' : 'Stiker #sa/#brat2, #tolive, AI Nexara & mockup',
+      target: 'features',
+      perm: 'public',
     },
     {
-      id: 'menu:help_info',
-      title: clampTitle(lang === 'en' ? '❓ Help & Bot Info' : lang === 'ja' ? '❓ ヘルプ＆情報' : '❓ Bantuan & Info Bot'),
-      description: clampDesc(lang === 'en' ? 'Prefix guide, quake info, folio & owner contact' : lang === 'ja' ? '使い方ガイド・地震情報・オーナー連絡' : 'Cara pakai prefix, gempa, folio & kontak owner'),
-      command: `${p}menu help_info`,
-      requiredPermission: 'public',
-      actionKind: 'submenu',
+      id: 'quick:help_info',
+      title: lang === 'en' ? '❓ Help & Bot Info' : lang === 'ja' ? '❓ ヘルプ＆情報' : '❓ Bantuan & Info Bot',
+      desc: lang === 'en' ? 'Prefix guide, quake info, folio & owner contact' : lang === 'ja' ? '使い方ガイド・地震情報・オーナー連絡' : 'Cara pakai prefix, gempa, folio & kontak owner',
+      target: 'help_info',
+      perm: 'public',
     },
   ];
 
-  const manageRows: InteractiveMenuRow[] = [];
-  if (ctx.chatScope === 'group' && (ctx.isGroupAdmin || ctx.isOwner)) {
-    manageRows.push({
-      id: 'menu:group_settings',
-      title: clampTitle(lang === 'en' ? '👥 Group Settings' : lang === 'ja' ? '👥 グループ設定' : '👥 Pengaturan Grup'),
-      description: clampDesc(lang === 'en' ? 'Welcome, left, anti-spam & group streaks' : lang === 'ja' ? 'ウェルカム・荒らし対策・グループ記録' : 'Welcome, left, anti-sistem & streak grup'),
-      command: `${p}menu group_settings`,
-      requiredPermission: 'group_admin',
-      actionKind: 'submenu',
+  // Filter quick nav rows against live DB enabled/visible state
+  const quickNavRows: InteractiveMenuRow[] = defaultQuickRows
+    .filter((item) => {
+      const dbRec = db.prepare(`SELECT visible, enabled, language FROM menu_categories WHERE id = ?`).get(item.id) as
+        | { visible: number; enabled: number; language: string }
+        | undefined;
+      if (dbRec && (!dbRec.visible || !dbRec.enabled)) return false;
+      if (dbRec && dbRec.language !== 'all' && dbRec.language !== lang) return false;
+      return true;
+    })
+    .map((item) => {
+      const dbRec = dbCatMap.get(item.id);
+      return {
+        id: `menu:${item.target}`,
+        title: clampTitle(lang === 'id' && dbRec ? dbRec.title : item.title),
+        description: clampDesc(lang === 'id' && dbRec?.description ? dbRec.description : item.desc),
+        command: `${p}menu ${item.target}`,
+        requiredPermission: dbRec?.permission || item.perm,
+        actionKind: 'submenu',
+      };
     });
-  }
-  if (ctx.isOwner) {
-    manageRows.push({
-      id: 'menu:bot_settings',
-      title: clampTitle(lang === 'en' ? '⚙️ Bot Settings' : lang === 'ja' ? '⚙️ ボット設定' : '⚙️ Pengaturan Bot'),
-      description: clampDesc(lang === 'en' ? 'Language, blue tick, maintenance & prefix' : lang === 'ja' ? '言語・既読・メンテナンス・プレフィックス' : 'Bahasa ID/EN/JA, blue tick & maintenance'),
-      command: `${p}menu bot_settings`,
-      requiredPermission: 'owner',
-      actionKind: 'submenu',
-    });
-    manageRows.push({
-      id: 'menu:owner',
-      title: clampTitle(lang === 'en' ? '👑 Owner Console' : lang === 'ja' ? '👑 オーナーメニュー' : '👑 Menu Owner & Admin'),
-      description: clampDesc(lang === 'en' ? 'Prefixes, redeems, server status & groups' : lang === 'ja' ? 'プレフィックス・引き換え・ステータス管理' : 'Manajemen prefix, redeem, grup & server'),
-      command: `${p}menu owner`,
-      requiredPermission: 'owner',
+
+  // Include any dashboard-created custom categories
+  const customCategories = dbCats.filter((c) => !c.id.startsWith('cat:') && !c.id.startsWith('quick:'));
+  for (const cc of customCategories) {
+    if (cc.language !== 'all' && cc.language !== lang) continue;
+    if (cc.permission === 'owner' && !ctx.isOwner) continue;
+    if (cc.permission === 'group_admin' && !ctx.isOwner && !ctx.isGroupAdmin) continue;
+    quickNavRows.push({
+      id: `menu:${cc.target_menu_key}`,
+      title: clampTitle(cc.title),
+      description: clampDesc(cc.description || `Buka ${cc.title}`),
+      command: `${p}menu ${cc.target_menu_key}`,
+      requiredPermission: cc.permission,
       actionKind: 'submenu',
     });
   }
 
-  const categoryRows: InteractiveMenuRow[] = ALL_CATEGORIES
-    .filter((cat) => (cat === 'OWNER' ? ctx.isOwner : true))
+  const manageRows: InteractiveMenuRow[] = [];
+  if (ctx.chatScope === 'group' && (ctx.isGroupAdmin || ctx.isOwner)) {
+    const grpCat = dbCatMap.get('quick:group_settings');
+    if (grpCat) {
+      manageRows.push({
+        id: 'menu:group_settings',
+        title: clampTitle(lang === 'en' ? '👥 Group Settings' : lang === 'ja' ? '👥 グループ設定' : grpCat.title),
+        description: clampDesc(lang === 'en' ? 'Welcome, left, anti-spam & group streaks' : lang === 'ja' ? 'ウェルカム・荒らし対策・グループ記録' : grpCat.description),
+        command: `${p}menu group_settings`,
+        requiredPermission: 'group_admin',
+        actionKind: 'submenu',
+      });
+    }
+  }
+  if (ctx.isOwner) {
+    const botCat = dbCatMap.get('quick:bot_settings');
+    if (botCat) {
+      manageRows.push({
+        id: 'menu:bot_settings',
+        title: clampTitle(lang === 'en' ? '⚙️ Bot Settings' : lang === 'ja' ? '⚙️ ボット設定' : botCat.title),
+        description: clampDesc(lang === 'en' ? 'Language, blue tick, maintenance & prefix' : lang === 'ja' ? '言語・既読・メンテナンス・プレフィックス' : botCat.description),
+        command: `${p}menu bot_settings`,
+        requiredPermission: 'owner',
+        actionKind: 'submenu',
+      });
+    }
+    const ownCat = dbCatMap.get('quick:owner');
+    if (ownCat) {
+      manageRows.push({
+        id: 'menu:owner',
+        title: clampTitle(lang === 'en' ? '👑 Owner Console' : lang === 'ja' ? '👑 オーナーメニュー' : ownCat.title),
+        description: clampDesc(lang === 'en' ? 'Prefixes, redeems, server status & groups' : lang === 'ja' ? 'プレフィックス・引き換え・ステータス管理' : ownCat.description),
+        command: `${p}menu owner`,
+        requiredPermission: 'owner',
+        actionKind: 'submenu',
+      });
+    }
+  }
+
+  // Build sorted live categories from DB visibility & sort_order
+  const orderedCats = [...ALL_CATEGORIES].sort((a, b) => {
+    const oa = dbCatMap.get(`cat:${a}`)?.sort_order ?? 99;
+    const ob = dbCatMap.get(`cat:${b}`)?.sort_order ?? 99;
+    return oa - ob;
+  });
+
+  const categoryRows: InteractiveMenuRow[] = orderedCats
+    .filter((cat) => {
+      const dbRec = db.prepare(`SELECT visible, enabled, language FROM menu_categories WHERE id = ?`).get(`cat:${cat}`) as
+        | { visible: number; enabled: number; language: string }
+        | undefined;
+      if (dbRec && (!dbRec.visible || !dbRec.enabled)) return false;
+      if (dbRec && dbRec.language !== 'all' && dbRec.language !== lang) return false;
+      return true;
+    })
     .map((cat) => {
-      const count = ALL_COMMANDS.filter((c) => c.category === cat).length;
+      const dbRec = dbCatMap.get(`cat:${cat}`);
+      const count = liveCountMap.get(cat) ?? ALL_COMMANDS.filter((c) => c.category === cat).length;
+      const displayCat = cat === '48GROUP' ? '48GROUP GAMES' : cat;
       return {
         id: `menu:category:${cat}:1`,
-        title: clampTitle(`${CATEGORY_META[cat].icon} ${cat} (${count})`),
-        description: clampDesc(formatCategoryDescription(cat, lang)),
+        title: clampTitle(`${CATEGORY_META[cat].icon} ${displayCat} (${count})`),
+        description: clampDesc(lang === 'id' && dbRec?.description ? dbRec.description : formatCategoryDescription(cat, lang)),
         command: `${p}menu category:${cat}:1`,
-        requiredPermission: cat === 'OWNER' ? 'owner' : 'public',
+        requiredPermission: dbRec?.permission || (cat === 'OWNER' ? 'owner' : 'public'),
         actionKind: 'submenu' as const,
       };
     });
@@ -384,16 +719,16 @@ function buildMainMenu(ctx: MenuBuildContext): InteractiveMenuPayload {
     });
   }
   sections.push({
-    title: lang === 'en' ? 'All Command Categories' : lang === 'ja' ? '全コマンドカテゴリ' : 'Semua Kategori Command (13)',
+    title: lang === 'en' ? 'All Command Categories' : lang === 'ja' ? '全コマンドカテゴリ' : 'Semua Kategori Menu (13)',
     rows: categoryRows,
   });
 
   return {
     menuKey: 'main',
-    title: 'Freya-san Hub v5.0',
+    title: 'FREYA-SAN HUB v5.0 NAVIGATION',
     subtitle: t.menuWelcomeSubtitle,
     buttonText: t.menuListButton,
-    footer: t.botFooter,
+    footer: menuCfg.footerText || t.botFooter,
     sections,
   };
 }
@@ -403,27 +738,63 @@ function buildCategoryMenu(
   page: number,
   ctx: MenuBuildContext,
 ): { menu: InteractiveMenuPayload; headerText: string } {
+  ensureMenuManagementSeeded();
   const lang = normalizeBotLang(ctx.lang);
   const t = botText(lang);
   const p = ctx.prefix;
+  const menuCfg = getMenuConfig();
 
-  const list = ALL_COMMANDS.filter((c) => c.category === cat && c.enabled);
+  const dbCmds = db
+    .prepare(`SELECT name, description, permission FROM commands WHERE category = ? AND enabled = 1 ORDER BY name ASC`)
+    .all(cat) as Array<{ name: string; description: string; permission: string }>;
+
+  const customCmds = db
+    .prepare(`SELECT name, description, permission FROM custom_commands WHERE category = ? AND enabled = 1 ORDER BY name ASC`)
+    .all(cat) as Array<{ name: string; description: string; permission: string }>;
+
+  const dbMenuItems = db
+    .prepare(`SELECT id, label, description, command_name, action_kind, target_key, permission, language FROM menu_items WHERE category_id = ? AND enabled = 1 AND visible = 1 ORDER BY sort_order ASC`)
+    .all(`cat:${cat}`) as MenuItemRecord[];
+
+  const combinedEntries: InteractiveMenuRow[] = [
+    ...dbMenuItems
+      .filter((mi) => mi.language === 'all' || mi.language === lang)
+      .map((mi) => ({
+        id: `customitem:${mi.id}`,
+        title: clampTitle(mi.label),
+        description: clampDesc(mi.description || `${p}${mi.command_name}`),
+        command: mi.action_kind === 'submenu' && mi.target_key ? `${p}menu ${mi.target_key}` : `${p}${mi.command_name}`,
+        requiredPermission: mi.permission,
+        actionKind: mi.action_kind,
+      })),
+    ...customCmds.map((c) => ({
+      id: `cmd:custom:${c.name}`,
+      title: clampTitle(`✨ ${p}${c.name}`),
+      description: clampDesc(c.description || 'Custom command dari Owner Dashboard'),
+      command: `${p}${c.name}`,
+      requiredPermission: (c.permission === 'owner' ? 'owner' : c.permission === 'group_admin' ? 'group_admin' : 'public') as
+        | 'public'
+        | 'group_admin'
+        | 'owner',
+      actionKind: 'command' as const,
+    })),
+    ...dbCmds.map((c) => ({
+      id: `cmd:help:${c.name}`,
+      title: clampTitle(`${p}${c.name}`),
+      description: clampDesc(c.description),
+      command: c.name === 'menu' || c.name === '48group' ? `${p}${c.name}` : `${p}help ${c.name}`,
+      requiredPermission: (c.permission === 'owner' ? 'owner' : c.permission === 'group_admin' ? 'group_admin' : 'public') as
+        | 'public'
+        | 'group_admin'
+        | 'owner',
+      actionKind: 'command' as const,
+    })),
+  ];
+
   const perPage = 8;
-  const totalPages = Math.max(1, Math.ceil(list.length / perPage));
+  const totalPages = Math.max(1, Math.ceil(combinedEntries.length / perPage));
   const safePage = Math.min(Math.max(1, page), totalPages);
-  const slice = list.slice((safePage - 1) * perPage, safePage * perPage);
-
-  const cmdRows: InteractiveMenuRow[] = slice.map((c) => ({
-    id: `cmd:help:${c.name}`,
-    title: clampTitle(`${p}${c.name}`),
-    description: clampDesc(c.description),
-    command:
-      c.name === 'menu' || c.name === '48group'
-        ? `${p}${c.name}`
-        : `${p}help ${c.name}`,
-    requiredPermission: c.permission === 'owner' ? 'owner' : c.permission === 'group_admin' ? 'group_admin' : 'public',
-    actionKind: 'command',
-  }));
+  const cmdRows = combinedEntries.slice((safePage - 1) * perPage, safePage * perPage);
 
   const navRows: InteractiveMenuRow[] = [];
   if (safePage > 1) {
@@ -450,10 +821,10 @@ function buildCategoryMenu(
 
   const headerText =
     lang === 'en'
-      ? `*${cat} Category* (Page ${safePage}/${totalPages}, ${list.length} commands)\nTap any command to view usage or run it.`
+      ? `*${cat} Category* (Page ${safePage}/${totalPages}, ${combinedEntries.length} commands)\nTap any command to view usage or run it.`
       : lang === 'ja'
-      ? `*${cat} カテゴリ* (${safePage}/${totalPages} ページ・全${list.length}件)\nコマンドを選ぶと使い方を見たり実行できるよ。`
-      : `*Kategori ${cat}* (Halaman ${safePage}/${totalPages} · ${list.length} command)\nPilih command di bawah buat lihat panduan atau langsung pakai ya!`;
+      ? `*${cat} カテゴリ* (${safePage}/${totalPages} ページ・全${combinedEntries.length}件)\nコマンドを選ぶと使い方を見たり実行できるよ。`
+      : `*Kategori ${cat}* (Halaman ${safePage}/${totalPages} · ${combinedEntries.length} command)\nPilih command di bawah buat lihat panduan atau langsung pakai ya!`;
 
   return {
     headerText,
@@ -462,7 +833,7 @@ function buildCategoryMenu(
       title: clampTitle(`${CATEGORY_META[cat].icon} ${cat} (${safePage}/${totalPages})`, 24),
       subtitle: formatCategoryDescription(cat, lang),
       buttonText: t.menuListButton,
-      footer: t.botFooter,
+      footer: menuCfg.footerText || t.botFooter,
       sections: [
         {
           title: `${cat} (${safePage}/${totalPages})`,
@@ -472,6 +843,111 @@ function buildCategoryMenu(
           title: lang === 'en' ? 'Navigation' : lang === 'ja' ? 'ナビゲーション' : 'Navigasi',
           rows: navRows,
         },
+      ],
+    },
+  };
+}
+
+function buildMenuSearchPayload(
+  rawQuery: string,
+  page: number,
+  ctx: MenuBuildContext,
+): { menu: InteractiveMenuPayload; headerText: string } {
+  const lang = normalizeBotLang(ctx.lang);
+  const t = botText(lang);
+  const p = ctx.prefix;
+  const menuCfg = getMenuConfig();
+  const q = rawQuery.trim().toLowerCase();
+
+  const stdRows = db
+    .prepare(
+      `SELECT name, category, description, permission FROM commands
+       WHERE enabled = 1 AND (LOWER(name) LIKE ? OR LOWER(description) LIKE ? OR LOWER(category) LIKE ?)
+       ORDER BY usage_count DESC, name ASC LIMIT 40`,
+    )
+    .all(`%${q}%`, `%${q}%`, `%${q}%`) as Array<{ name: string; category: string; description: string; permission: string }>;
+
+  const customRows = db
+    .prepare(
+      `SELECT name, category, description, permission FROM custom_commands
+       WHERE enabled = 1 AND (LOWER(name) LIKE ? OR LOWER(description) LIKE ?)
+       ORDER BY name ASC LIMIT 20`,
+    )
+    .all(`%${q}%`, `%${q}%`) as Array<{ name: string; category: string; description: string; permission: string }>;
+
+  const allFound: InteractiveMenuRow[] = [
+    ...customRows
+      .filter((r) => ctx.isOwner || r.permission !== 'owner')
+      .map((r) => ({
+        id: `cmd:custom:${r.name}`,
+        title: clampTitle(`✨ ${p}${r.name}`),
+        description: clampDesc(`[${r.category}] ${r.description}`),
+        command: `${p}${r.name}`,
+        requiredPermission: (r.permission === 'owner' ? 'owner' : r.permission === 'group_admin' ? 'group_admin' : 'public') as
+          | 'public'
+          | 'group_admin'
+          | 'owner',
+        actionKind: 'command' as const,
+      })),
+    ...stdRows
+      .filter((r) => ctx.isOwner || r.permission !== 'owner')
+      .map((r) => ({
+        id: `cmd:help:${r.name}`,
+        title: clampTitle(`${p}${r.name}`),
+        description: clampDesc(`[${r.category}] ${r.description}`),
+        command: `${p}help ${r.name}`,
+        requiredPermission: (r.permission === 'owner' ? 'owner' : r.permission === 'group_admin' ? 'group_admin' : 'public') as
+          | 'public'
+          | 'group_admin'
+          | 'owner',
+        actionKind: 'command' as const,
+      })),
+  ];
+
+  const perPage = 8;
+  const totalPages = Math.max(1, Math.ceil(allFound.length / perPage));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const pageRows = allFound.slice((safePage - 1) * perPage, safePage * perPage);
+
+  const navRows: InteractiveMenuRow[] = [];
+  if (safePage > 1) {
+    navRows.push({
+      id: `menu:search_page:${safePage - 1}:${q}`,
+      title: clampTitle(t.menuPrevPageTitle),
+      description: clampDesc(`Halaman ${safePage - 1}/${totalPages}`),
+      command: `${p}menu search_page:${safePage - 1}:${q}`,
+      requiredPermission: 'public',
+      actionKind: 'submenu',
+    });
+  }
+  if (safePage < totalPages) {
+    navRows.push({
+      id: `menu:search_page:${safePage + 1}:${q}`,
+      title: clampTitle(t.menuNextPageTitle),
+      description: clampDesc(`Halaman ${safePage + 1}/${totalPages}`),
+      command: `${p}menu search_page:${safePage + 1}:${q}`,
+      requiredPermission: 'public',
+      actionKind: 'submenu',
+    });
+  }
+  navRows.push(backToMainRow(p, lang));
+
+  const headerText =
+    allFound.length === 0
+      ? `Nggak nemu command yang cocok sama *"${rawQuery}"* nih. Coba kata kunci lain atau ketik *${p}menu* ya!`
+      : `🔍 *Hasil Pencarian Menu: "${rawQuery}"* (${allFound.length} cocok · Hal ${safePage}/${totalPages})\nPilih hasil di bawah buat lihat panduan atau jalanin command-nya:`;
+
+  return {
+    headerText,
+    menu: {
+      menuKey: `search:${q}:${safePage}`,
+      title: clampTitle(`🔍 Cari: ${rawQuery}`, 24),
+      subtitle: headerText,
+      buttonText: t.menuListButton,
+      footer: menuCfg.footerText || t.botFooter,
+      sections: [
+        ...(pageRows.length > 0 ? [{ title: `Hasil (${safePage}/${totalPages})`, rows: pageRows }] : []),
+        { title: 'Navigasi', rows: navRows },
       ],
     },
   };
@@ -1174,6 +1650,8 @@ export function resolveMenuSelection(params: {
     };
   }
 
+  recordMenuItemTap(chosen.id);
+
   return {
     kind: 'matched_command',
     menuKey: latestRow.menu_key,
@@ -1200,6 +1678,61 @@ export function buildBaileysListPayload(
       })),
     })),
   };
+}
+
+export function buildBaileysInteractiveListProto(params: {
+  jid: string;
+  userJid?: string;
+  menu: InteractiveMenuPayload;
+  bodyText: string;
+}) {
+  const sections = params.menu.sections.map((sec) => ({
+    title: clampTitle(sec.title, 24),
+    rows: sec.rows.slice(0, 20).map((row) => ({
+      header: '',
+      title: clampTitle(row.title, 24),
+      description: clampDesc(row.description, 72),
+      id: row.id,
+    })),
+  }));
+
+  const interactiveProto = WAProto.Message.create({
+    viewOnceMessage: {
+      message: {
+        messageContextInfo: {
+          deviceListMetadata: {},
+          deviceListMetadataVersion: 2,
+        },
+        interactiveMessage: WAProto.Message.InteractiveMessage.create({
+          header: WAProto.Message.InteractiveMessage.Header.create({
+            title: params.menu.title,
+            hasMediaAttachment: false,
+          }),
+          body: WAProto.Message.InteractiveMessage.Body.create({
+            text: params.bodyText,
+          }),
+          footer: WAProto.Message.InteractiveMessage.Footer.create({
+            text: params.menu.footer,
+          }),
+          nativeFlowMessage: WAProto.Message.InteractiveMessage.NativeFlowMessage.create({
+            buttons: [
+              {
+                name: 'single_select',
+                buttonParamsJson: JSON.stringify({
+                  title: params.menu.buttonText || 'Pilih Kategori Menu',
+                  sections,
+                }),
+              },
+            ],
+          }),
+        }),
+      },
+    },
+  });
+
+  return generateWAMessageFromContent(params.jid, interactiveProto, {
+    userJid: params.userJid || params.jid,
+  });
 }
 
 export function recordMenuFallbackLog(params: {
